@@ -63,16 +63,22 @@ public enum SessionCrypto {
 
     internal static func read(from file: URL) throws -> Data {
         _ = try localPath(file)
-        let handle = try FileHandle(forReadingFrom: file)
-        defer { try? handle.close() }
+        guard let stream = InputStream(url: file) else {
+            throw AppleAuthError("Cannot open session file")
+        }
+        stream.open()
+        defer { stream.close() }
         var data = Data()
-        while let chunk = try handle.read(upToCount: min(65536, maximumSize + 38 - data.count)), !chunk.isEmpty {
-            data.append(chunk)
+        var chunk = [UInt8](repeating: 0, count: 65536)
+        while true {
+            let count = stream.read(&chunk, maxLength: min(chunk.count, maximumSize + 38 - data.count))
+            guard count >= 0 else { throw stream.streamError ?? AppleAuthError("Cannot read session file") }
+            if count == 0 { return data }
+            data.append(contentsOf: chunk.prefix(count))
             guard data.count <= maximumSize + 37 else {
                 throw AppleAuthError("Session file exceeds the 16 MiB storage limit")
             }
         }
-        return data
     }
 }
 

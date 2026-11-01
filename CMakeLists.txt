@@ -42,7 +42,7 @@ add_library(apple_auth
     src/adi/provisioning/seed.cpp
     src/api/c_api.cpp
     src/crypto/crypto.cpp
-    src/crypto/session.cpp
+    src/crypto/session_crypto.cpp
     src/crypto/srp.cpp
     src/sap/session.cpp
     src/sap/certificate.cpp)

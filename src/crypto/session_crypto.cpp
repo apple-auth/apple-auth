@@ -1,3 +1,4 @@
+// AES-GCM storage envelopes, independent of Apple authentication protocols.
 #include <apple_auth/session_crypto.hpp>
 #include "crypto/backend.hpp"
 #include <mbedtls/gcm.h>

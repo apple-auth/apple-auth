@@ -253,6 +253,7 @@ install(TARGETS ${apple_auth_install_targets} EXPORT apple_authTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES include/apple_auth/core.hpp include/apple_auth/c_api.h include/apple_auth/srp.hpp
+    include/apple_auth/session_crypto.hpp
     ${CMAKE_CURRENT_BINARY_DIR}/include/apple_auth/export.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/apple_auth)
 if(APPLE_AUTH_WITH_CLIENT)
     install(FILES include/apple_auth/client.hpp include/apple_auth/client_c_api.h ${CMAKE_CURRENT_BINARY_DIR}/include/apple_auth/client_export.h

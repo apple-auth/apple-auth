@@ -4,7 +4,7 @@ if(APPLE_AUTH_WITH_TESTFLIGHT)
     list(APPEND VCPKG_MANIFEST_FEATURES client testflight)
     list(REMOVE_DUPLICATES VCPKG_MANIFEST_FEATURES)
 endif()
-project(apple_auth VERSION 0.1.1 LANGUAGES C CXX)
+project(apple_auth VERSION 0.1.2 LANGUAGES C CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)

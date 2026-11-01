@@ -60,8 +60,17 @@ class _DeviceHeaders(c.Structure):
     _fields_ = [("user_agent", c.c_char_p), ("client_info", c.c_char_p)]
 
 
-class _DeviceConfig(c.Structure):
-    _fields_ = [("platform", c.c_int), ("mac_device", c.POINTER(_MacDevice)), ("serial_number", c.c_char_p)]
+class _ClientConfig(c.Structure):
+    _fields_ = [("directory", c.c_char_p), ("options", c.POINTER(_Options)),
+                ("platform", c.c_int), ("mac_device", c.POINTER(_MacDevice)),
+                ("iphone_device", c.POINTER(_IPhoneDevice)), ("serial_number", c.c_char_p),
+                ("headers", c.POINTER(_DeviceHeaders)), ("headers_json", c.c_char_p),
+                ("state", c.POINTER(c.c_uint8)), ("state_size", c.c_size_t)]
+
+
+class _VerificationOptions(c.Structure):
+    _fields_ = [("method", c.c_int), ("phone_number_id", c.c_int64),
+                ("code", _TwoFactor), ("select_phone", c.c_void_p), ("context", c.c_void_p)]
 
 
 def _utf8(value: str, field_name: str) -> bytes:
@@ -136,18 +145,16 @@ class Library:
                           "dll_directories/--dll-dir or APPLE_AUTH_DLL_DIRS") from error
         handle = c.c_void_p
         shapes = {
-            "aauth_client_create": [c.c_char_p, c.POINTER(_Options), c.POINTER(handle)],
-            "aauth_client_create_with_platform": [c.c_char_p, c.POINTER(_Options), c.c_int, c.POINTER(handle)],
-            "aauth_client_create_with_device": [c.c_char_p, c.POINTER(_Options), c.c_int,
-                                                c.POINTER(_MacDevice), c.POINTER(handle)],
-            "aauth_client_create_configured_v2": [c.c_char_p, c.POINTER(_Options),
-                                               c.POINTER(_DeviceConfig), c.POINTER(handle)],
+            "aauth_client_create": [c.POINTER(_ClientConfig), c.POINTER(handle)],
+            "aauth_client_state": [handle, c.POINTER(_Buffer)],
+            "aauth_client_session_data": [handle, c.c_int, c.POINTER(_Buffer)],
+            "aauth_client_set_session_data": [handle, c.c_int, c.POINTER(c.c_uint8), c.c_size_t],
             "aauth_client_device_platform": [handle, c.POINTER(c.c_int)],
             "aauth_client_mac_device": [handle, c.POINTER(_Buffer)],
             "aauth_client_device_info": [handle, c.POINTER(_Buffer)],
             "aauth_client_provision": [handle],
             "aauth_client_headers": [handle, c.POINTER(_Buffer)],
-            "aauth_client_login": [handle, c.c_char_p, c.c_char_p, _TwoFactor, handle, c.POINTER(handle)],
+            "aauth_client_login": [handle, c.c_char_p, c.c_char_p, c.POINTER(_VerificationOptions), c.POINTER(handle)],
             "aauth_account_session_save": [handle, c.c_char_p],
             "aauth_account_session_plist": [handle, c.POINTER(_Buffer)],
             "aauth_client_buffer_alloc": [c.c_size_t, c.POINTER(_Buffer)],
@@ -166,23 +173,6 @@ class Library:
             for name, arguments in shapes.items():
                 function = getattr(self._native, name)
                 function.argtypes, function.restype = arguments, c.c_int
-            self._create_v3 = getattr(self._native, "aauth_client_create_configured_v3", None)
-            if self._create_v3 is not None:
-                self._create_v3.argtypes = [c.c_char_p, c.POINTER(_Options), c.POINTER(_DeviceConfig),
-                                            c.POINTER(_IPhoneDevice), c.POINTER(handle)]
-                self._create_v3.restype = c.c_int
-            self._create_v4 = getattr(self._native, "aauth_client_create_configured_v4", None)
-            if self._create_v4 is not None:
-                self._create_v4.argtypes = [c.c_char_p, c.POINTER(_Options), c.POINTER(_DeviceConfig),
-                                            c.POINTER(_IPhoneDevice), c.POINTER(_DeviceHeaders),
-                                            c.POINTER(handle)]
-                self._create_v4.restype = c.c_int
-            self._create_v5 = getattr(self._native, "aauth_client_create_configured_v5", None)
-            if self._create_v5 is not None:
-                self._create_v5.argtypes = [c.c_char_p, c.POINTER(_Options), c.POINTER(_DeviceConfig),
-                                            c.POINTER(_IPhoneDevice), c.POINTER(_DeviceHeaders),
-                                            c.c_char_p, c.POINTER(handle)]
-                self._create_v5.restype = c.c_int
             for name in ("aauth_client_free", "aauth_account_session_free", "aauth_store_session_free"):
                 function = getattr(self._native, name)
                 function.argtypes, function.restype = [handle], None
@@ -274,7 +264,7 @@ class Library:
         finally:
             self._native.aauth_client_buffer_free(c.byref(output))
 
-    def client(self, directory, *, device_platform: str | None = None,
+    def client(self, directory=None, *, initial_state: bytes | None = None, device_platform: str | None = None,
                mac_model: str | None = None, macos_version: str | None = None,
                macos_build: str | None = None, serial_number: str | None = None,
                iphone_model: str | None = None, ios_version: str | None = None,
@@ -283,7 +273,7 @@ class Library:
                headers: dict[str, str] | None = None,
                transport=None, clock=None) -> Client:
         """Use a synthetic identity. None reuses saved platform; new state defaults to Windows."""
-        return Client(self, directory, device_platform=device_platform, mac_model=mac_model,
+        return Client(self, directory, initial_state=initial_state, device_platform=device_platform, mac_model=mac_model,
                       macos_version=macos_version, macos_build=macos_build, serial_number=serial_number,
                       iphone_model=iphone_model, ios_version=ios_version, ios_build=ios_build,
                       user_agent=user_agent, client_info=client_info,
@@ -377,8 +367,8 @@ class _NativeClient:
 
 
 class Client(_NativeClient):
-    def __init__(self, library: Library, directory, *,
-                 device_platform: str | None = None,
+    def __init__(self, library: Library, directory=None, *,
+                 initial_state: bytes | None = None, device_platform: str | None = None,
                  mac_model: str | None = None,
                  macos_version: str | None = None,
                  macos_build: str | None = None,
@@ -403,46 +393,49 @@ class Client(_NativeClient):
                 _utf8(mac_model, "mac_model") if mac_model is not None else None,
                 _utf8(macos_version, "macos_version") if macos_version is not None else None,
                 _utf8(macos_build, "macos_build") if macos_build is not None else None)
-            config = _DeviceConfig(_PLATFORM_IDS.get(device_platform, 0), c.pointer(mac_device),
-                _utf8(serial_number, "serial_number") if serial_number is not None else None)
             iphone_device = _IPhoneDevice(
                 _utf8(iphone_model, "iphone_model") if iphone_model is not None else None,
                 _utf8(ios_version, "ios_version") if ios_version is not None else None,
                 _utf8(ios_build, "ios_build") if ios_build is not None else None)
-            iphone = c.byref(iphone_device) if any(
+            iphone = c.pointer(iphone_device) if any(
                 value is not None for value in (iphone_model, ios_version, ios_build)) else None
-            if headers is not None:
-                if not isinstance(headers, dict) or not all(
-                    isinstance(name, str) and isinstance(value, str) for name, value in headers.items()
-                ):
-                    raise TypeError("headers must map strings to strings")
-                if library._create_v5 is None:
-                    raise RuntimeError("Rebuild the native library to configure custom headers")
-                overrides = _DeviceHeaders(
-                    _utf8(user_agent, "user_agent") if user_agent is not None else None,
-                    _utf8(client_info, "client_info") if client_info is not None else None)
-                self._check(library._create_v5(_path(directory), c.byref(options), c.byref(config),
-                    iphone, c.byref(overrides), json.dumps(headers).encode("utf-8"),
-                    c.byref(self._handle)))
-            elif user_agent is not None or client_info is not None:
-                if library._create_v4 is None:
-                    raise RuntimeError("Rebuild the native library to configure device headers")
-                headers = _DeviceHeaders(
-                    _utf8(user_agent, "user_agent") if user_agent is not None else None,
-                    _utf8(client_info, "client_info") if client_info is not None else None)
-                self._check(library._create_v4(_path(directory), c.byref(options), c.byref(config),
-                    iphone, c.byref(headers), c.byref(self._handle)))
-            elif iphone is not None:
-                if library._create_v3 is None:
-                    raise RuntimeError("Rebuild the native library to configure an iPhone model and iOS")
-                self._check(library._create_v3(_path(directory), c.byref(options), c.byref(config),
-                    iphone, c.byref(self._handle)))
-            else:
-                self._check(library._native.aauth_client_create_configured_v2(_path(directory), c.byref(options),
-                    c.byref(config), c.byref(self._handle)))
+            if headers is not None and (not isinstance(headers, dict) or not all(
+                isinstance(name, str) and isinstance(value, str) for name, value in headers.items())):
+                raise TypeError("headers must map strings to strings")
+            overrides = _DeviceHeaders(
+                _utf8(user_agent, "user_agent") if user_agent is not None else None,
+                _utf8(client_info, "client_info") if client_info is not None else None)
+            state = None if initial_state is None else bytes(initial_state)
+            state_buffer = None if state is None else (c.c_uint8 * len(state)).from_buffer_copy(state)
+            config = _ClientConfig(
+                _path(directory) if directory is not None else None, c.pointer(options),
+                _PLATFORM_IDS.get(device_platform, 0), c.pointer(mac_device), iphone,
+                _utf8(serial_number, "serial_number") if serial_number is not None else None,
+                c.pointer(overrides), json.dumps(headers).encode("utf-8") if headers is not None else None,
+                state_buffer, len(state) if state is not None else 0)
+            self._check(library._native.aauth_client_create(c.byref(config), c.byref(self._handle)))
         except BaseException:
             self.close()
             raise
+
+    def serialize_state(self, *, encryption_key: bytes | None = None) -> bytes:
+        self._prepare()
+        data = self._library._buffer(self._library._native.aauth_client_state, self._handle, check=self._check)
+        if encryption_key is not None:
+            from .crypto import encrypt
+            return encrypt(data, encryption_key, library=self._library)
+        return data
+
+    def session_data(self, *, kind="account") -> bytes:
+        self._prepare()
+        return self._library._buffer(self._library._native.aauth_client_session_data,
+                                     self._handle, ("account", "store").index(kind), check=self._check)
+
+    def set_session_data(self, data: bytes, *, kind="account"):
+        self._prepare()
+        data = bytes(data)
+        buffer = (c.c_uint8 * len(data)).from_buffer_copy(data)
+        self._check(self._library._native.aauth_client_set_session_data(self._handle, ("account", "store").index(kind), buffer, len(data)))
 
     def provision(self):
         self._prepare()
@@ -528,9 +521,14 @@ class Client(_NativeClient):
         callback = _TwoFactor(verify) if two_factor else _TwoFactor()
         result = c.c_void_p()
         try:
-            function = self._library._native.aauth_client_store_login if store else self._library._native.aauth_client_login
-            self._check(function(self._handle, _utf8(email, "Apple ID"),
-                _utf8(password, "Password"), callback, None, c.byref(result)))
+            if store:
+                status = self._library._native.aauth_client_store_login(self._handle, _utf8(email, "Apple ID"),
+                    _utf8(password, "Password"), callback, None, c.byref(result))
+            else:
+                verification = _VerificationOptions(0, 0, callback, None, None)
+                status = self._library._native.aauth_client_login(self._handle, _utf8(email, "Apple ID"),
+                    _utf8(password, "Password"), c.byref(verification), c.byref(result))
+            self._check(status)
             return StoreSession(self._library, result) if store else AccountSession(self._library, result)
         except BaseException:
             if result:

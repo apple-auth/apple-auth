@@ -76,6 +76,14 @@ stored as 12 uppercase hex characters.
 Implementation: [GrandSlam identity](../src/client/client.cpp) and
 [Store identity](../src/client/store.cpp).
 
+## In-memory client snapshots
+
+`Client::serialize_state()` / Swift `Device.serializeState()` use the same
+`apple-auth-state` JSON format across bindings, optionally wrapped in AES-GCM.
+The snapshot contains named identity, ADI and session records encoded as base64;
+callbacks, clocks, headers and keys stay with the application.
+[Exact fields, limits and RAM/file examples](in-memory-state.md#snapshot-format-and-boundaries).
+
 ## `adi.pb`: ADI profile container
 
 `adi.pb` is a binary container. The following layouts use big-endian integers;

@@ -132,6 +132,7 @@ if(APPLE_AUTH_WITH_CLIENT)
         src/client/client.cpp
         src/client/client_support.cpp
         src/client/session_storage.cpp
+        src/client/state_storage.cpp
         ${apple_auth_transport}
         ${apple_auth_plist_source}
         src/client/authentication.cpp

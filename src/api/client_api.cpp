@@ -1,4 +1,5 @@
 #include "client/client_internal.hpp"
+#include "client/state_storage.hpp"
 #include "crypto/backend.hpp"
 #include <apple_auth/client_c_api.h>
 #ifdef APPLE_AUTH_WITH_TESTFLIGHT
@@ -112,125 +113,52 @@ void copy_buffer(ByteView bytes, aauth_client_buffer* output) {
 }
 
 ClientOptions client_options(const aauth_client_options* supplied) {
-    if (!supplied) {
-        return {};
-    }
-    const auto options = *supplied;
-    ClientOptions result;
-    if (options.clock) {
-        result.clock = [options] {
-            return options.clock(options.context);
-        };
-    }
+    const auto options = supplied ? *supplied : aauth_client_options{};
+    ClientOptions config;
+    if (options.clock) config.clock = [options] { return options.clock(options.context); };
     auto fallback = options.transport ? Transport{} : netdetail::make_curl_transport();
-    result.transport = [options, fallback = std::move(fallback)](const HttpRequest& request) {
+    config.transport = [options, fallback = std::move(fallback)](const HttpRequest& request) {
         const auto start = std::chrono::steady_clock::now();
         const auto observe = [&](long status) {
             if (options.observer) {
-                const auto seconds =
-                    std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-                options.observer(
-                    options.context, request.method.c_str(), request.url.c_str(), status, seconds);
+                options.observer(options.context, request.method.c_str(), request.url.c_str(), status,
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
             }
         };
-        HttpResponse response;
+        HttpResponse result;
         try {
             if (options.transport) {
-                const auto headers = netdetail::Json(request.headers).dump();
-                const aauth_http_request input{request.url.c_str(),
-                                               request.method.c_str(),
-                                               headers.c_str(),
-                                               request.body.data(),
-                                               request.body.size()};
-                aauth_http_response output{};
-                struct ResponseOwner {
-                    aauth_client_buffer& buffer;
-                    ~ResponseOwner() {
-                        delete[] buffer.data;
-                    }
-                } owner{output.body};
-                const auto status = options.transport(options.context, &input, &output);
-                if (status != 0) {
-                    throw apple_auth::Error(ErrorCode::network, "HTTP transport callback failed");
-                }
-                require(output.body.size <= maximum_response_size &&
-                        (output.body.data != nullptr || output.body.size == 0));
-                response.status = output.status;
-                if (output.body.size) {
-                    response.body.assign(output.body.data, output.body.data + output.body.size);
-                }
-            } else {
-                response = fallback(request);
-            }
-        } catch (...) {
-            observe(0);
-            throw;
-        }
-        observe(response.status);
-        return response;
-    };
-    return result;
-}
-ClientOptions client_options_v2(const aauth_client_options_v2 *supplied) {
-    const aauth_client_options_v2 options = supplied ? *supplied : aauth_client_options_v2{};
-    const aauth_client_options base{nullptr, options.observer, options.clock, options.context};
-    auto config = client_options(&base);
-    if (options.transport) {
-        config.transport = [options](const HttpRequest &request) {
-            const auto start = std::chrono::steady_clock::now();
-            const auto observe = [&](long status) {
-                if (options.observer) {
-                    options.observer(
-                        options.context, request.method.c_str(), request.url.c_str(), status,
-                        std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
-                            .count());
-                }
-            };
-            HttpResponse result;
-            try {
                 const auto json = netdetail::Json(request.headers).dump();
-                const aauth_http_request input{request.url.c_str(), request.method.c_str(),
-                                               json.c_str(), request.body.data(),
-                                               request.body.size()};
-                aauth_http_response_v2 response{};
+                const aauth_http_request input{request.url.c_str(), request.method.c_str(), json.c_str(),
+                                               request.body.data(), request.body.size()};
+                aauth_http_response response{};
                 struct Owner {
-                    aauth_http_response_v2 &response;
+                    aauth_http_response& response;
                     ~Owner() {
                         delete[] response.body.data;
                         delete[] response.headers_json.data;
                     }
                 } owner{response};
-                if (options.transport(options.context, &input, &response) != 0) {
+                if (options.transport(options.context, &input, &response) != 0)
                     throw apple_auth::Error(ErrorCode::network, "HTTP transport callback failed");
-                }
-                require(response.body.size <= maximum_response_size &&
-                        (!response.body.size || response.body.data) &&
-                        response.headers_json.size <= 64 * 1024 &&
-                        (!response.headers_json.size || response.headers_json.data));
+                require(response.body.size <= maximum_response_size && (!response.body.size || response.body.data) &&
+                        response.headers_json.size <= 64 * 1024 && (!response.headers_json.size || response.headers_json.data));
                 result.status = response.status;
-                if (response.body.size) {
-                    result.body.assign(response.body.data, response.body.data + response.body.size);
-                }
+                if (response.body.size) result.body.assign(response.body.data, response.body.data + response.body.size);
                 if (response.headers_json.size) {
                     const auto headers = netdetail::Json::parse(response.headers_json.data,
-                                                                response.headers_json.data +
-                                                                    response.headers_json.size);
+                        response.headers_json.data + response.headers_json.size);
                     require(headers.is_array() && headers.size() <= 1024);
-                    for (const auto &item : headers) {
-                        require(item.is_array() && item.size() == 2 && item[0].is_string() &&
-                                item[1].is_string());
-                        result.headers.emplace_back(item[0].get<std::string>(),
-                                                    item[1].get<std::string>());
+                    for (const auto& item : headers) {
+                        require(item.is_array() && item.size() == 2 && item[0].is_string() && item[1].is_string());
+                        result.headers.emplace_back(item[0].get<std::string>(), item[1].get<std::string>());
                     }
                 }
-            } catch (...) {
-                observe(0);
-                throw;
-            }
-            observe(result.status);
-            return result;
-        };
-    }
+            } else result = fallback(request);
+        } catch (...) { observe(0); throw; }
+        observe(result.status);
+        return result;
+    };
     return config;
 }
 
@@ -244,9 +172,9 @@ Headers parse_headers(const char *encoded) {
     return json.get<Headers>();
 }
 
-ClientOptions store_options(const aauth_client_options_v2 *supplied,
+ClientOptions store_options(const aauth_client_options *supplied,
                             const aauth_device_headers *headers, const char *headers_json) {
-    auto options = client_options_v2(supplied);
+    auto options = client_options(supplied);
     if (headers) {
         options.user_agent = headers->user_agent ? headers->user_agent : "";
         options.client_info = headers->client_info ? headers->client_info : "";
@@ -317,50 +245,54 @@ const char* aauth_client_last_error(void) {
     return last_error.data();
 }
 
-aauth_status aauth_client_create(const char* directory,
-                                 const aauth_client_options* options,
-                                 aauth_client** output) {
-    return aauth_client_create_with_platform(directory, options, AAUTH_DEVICE_AUTOMATIC, output);
-}
-
-aauth_status aauth_client_create_with_platform(const char* directory,
-                                               const aauth_client_options* options,
-                                               aauth_device_platform platform,
-                                               aauth_client** output) {
-    return aauth_client_create_with_device(directory, options, platform, nullptr, output);
-}
-
-aauth_status aauth_client_create_with_device(const char* directory,
-                                             const aauth_client_options* options,
-                                             aauth_device_platform platform,
-                                             const aauth_mac_device* mac_device,
-                                             aauth_client** output) {
-    const aauth_device_config config{platform, mac_device, nullptr};
-    return aauth_client_create_configured(directory, options, &config, output);
-}
-
-aauth_status aauth_client_create_configured(const char* directory,
-                                            const aauth_client_options* options,
-                                            const aauth_device_config* device,
-                                            aauth_client** output) {
+aauth_status aauth_client_create(const aauth_client_config* supplied, aauth_client** output) {
     return guard([&] {
         require(output != nullptr);
-        auto config = client_options(options);
-        if (device) {
-            config.device_platform = static_cast<DevicePlatform>(device->platform);
-            if (device->mac_device) {
-                const auto& mac = *device->mac_device;
-                config.mac_device = {mac.model ? mac.model : "",
-                                     mac.macos_version ? mac.macos_version : "",
-                                     mac.macos_build ? mac.macos_build : ""};
-            }
-            if (device->serial_number) {
-                config.serial_number = device->serial_number;
-            }
+        const auto input = supplied ? *supplied : aauth_client_config{};
+        require(input.platform >= AAUTH_DEVICE_AUTOMATIC && input.platform <= AAUTH_DEVICE_ANDROID &&
+                input.state_size <= netdetail::maximum_state_size && (!input.state_size || input.state) &&
+                !(input.directory && (input.state || input.state_size)));
+        auto options = store_options(input.options, input.headers, input.headers_json);
+        options.device_platform = static_cast<DevicePlatform>(input.platform);
+        if (input.mac_device) {
+            const auto& mac = *input.mac_device;
+            options.mac_device = {mac.model ? mac.model : "", mac.macos_version ? mac.macos_version : "",
+                                   mac.macos_build ? mac.macos_build : ""};
         }
-        auto result = std::unique_ptr<aauth_client>(
-            new aauth_client{Client(utf8_path(directory), std::move(config))});
+        if (input.iphone_device) {
+            const auto& phone = *input.iphone_device;
+            options.iphone_device = {phone.model ? phone.model : "", phone.ios_version ? phone.ios_version : "",
+                                      phone.ios_build ? phone.ios_build : ""};
+        }
+        if (input.serial_number) options.serial_number = input.serial_number;
+        auto create = [&]() -> Client {
+            if (input.directory) return Client(utf8_path(input.directory), std::move(options));
+            if (input.state || input.state_size) return Client(ByteView(input.state, input.state_size), std::move(options));
+            return Client(std::move(options));
+        };
+        auto result = std::make_unique<aauth_client>(aauth_client{create()});
         *output = result.release();
+    });
+}
+
+aauth_status aauth_client_state(const aauth_client* client, aauth_client_buffer* output) {
+    return guard([&] { require(client && output); copy_buffer(client->value.serialize_state(), output); });
+}
+
+aauth_status aauth_client_session_data(const aauth_client* client, aauth_session_kind kind,
+                                      aauth_client_buffer* output) {
+    return guard([&] {
+        require(client && output && (kind == AAUTH_SESSION_ACCOUNT || kind == AAUTH_SESSION_STORE));
+        copy_buffer(client->value.session_data(static_cast<SessionKind>(kind)), output);
+    });
+}
+
+aauth_status aauth_client_set_session_data(aauth_client* client, aauth_session_kind kind,
+                                          const uint8_t* data, size_t size) {
+    return guard([&] {
+        require(client && size <= netdetail::maximum_state_size && (!size || data) &&
+                (kind == AAUTH_SESSION_ACCOUNT || kind == AAUTH_SESSION_STORE));
+        client->value.set_session_data({data, size}, static_cast<SessionKind>(kind));
     });
 }
 
@@ -376,78 +308,6 @@ aauth_status aauth_client_mac_device(const aauth_client* client, aauth_client_bu
         }
         const auto json = metadata.dump();
         copy_buffer({reinterpret_cast<const std::uint8_t*>(json.data()), json.size()}, output);
-    });
-}
-
-aauth_status aauth_client_create_configured_v2(const char* directory,
-                                               const aauth_client_options_v2* supplied,
-                                               const aauth_device_config* device,
-                                               aauth_client** output) {
-    return aauth_client_create_configured_v3(directory, supplied, device, nullptr, output);
-}
-
-aauth_status aauth_client_create_configured_v3(const char* directory,
-                                               const aauth_client_options_v2* supplied,
-                                               const aauth_device_config* device,
-                                               const aauth_iphone_device* iphone,
-                                               aauth_client** output) {
-    return aauth_client_create_configured_v4(directory, supplied, device, iphone, nullptr, output);
-}
-
-aauth_status aauth_client_create_configured_v4(const char* directory,
-                                               const aauth_client_options_v2* supplied,
-                                               const aauth_device_config* device,
-                                               const aauth_iphone_device* iphone,
-                                               const aauth_device_headers* headers,
-                                               aauth_client** output) {
-    return aauth_client_create_configured_v5(
-        directory, supplied, device, iphone, headers, nullptr, output);
-}
-
-aauth_status aauth_client_create_configured_v5(const char* directory,
-                                               const aauth_client_options_v2* supplied,
-                                               const aauth_device_config* device,
-                                               const aauth_iphone_device* iphone,
-                                               const aauth_device_headers* headers,
-                                               const char* headers_json,
-                                               aauth_client** output) {
-    return guard([&] {
-        require(output != nullptr);
-        auto config = client_options_v2(supplied);
-        if (device) {
-            config.device_platform = static_cast<DevicePlatform>(device->platform);
-            if (device->mac_device) {
-                const auto& mac = *device->mac_device;
-                config.mac_device = {mac.model ? mac.model : "",
-                                     mac.macos_version ? mac.macos_version : "",
-                                     mac.macos_build ? mac.macos_build : ""};
-            }
-            if (device->serial_number) {
-                config.serial_number = device->serial_number;
-            }
-        }
-        if (iphone) {
-            config.iphone_device = {iphone->model ? iphone->model : "",
-                                    iphone->ios_version ? iphone->ios_version : "",
-                                    iphone->ios_build ? iphone->ios_build : ""};
-        }
-        if (headers) {
-            config.user_agent = headers->user_agent ? headers->user_agent : "";
-            config.client_info = headers->client_info ? headers->client_info : "";
-        }
-        if (headers_json) {
-            const std::string_view encoded(headers_json);
-            require(encoded.size() <= 65536);
-            const auto values = netdetail::Json::parse(encoded);
-            require(values.is_object());
-            for (const auto& [name, value] : values.items()) {
-                require(value.is_string());
-                config.headers.emplace(name, value.get<std::string>());
-            }
-        }
-        auto result = std::make_unique<aauth_client>(
-            aauth_client{Client(utf8_path(directory), std::move(config))});
-        *output = result.release();
     });
 }
 
@@ -503,39 +363,6 @@ aauth_status aauth_client_headers(aauth_client* client, aauth_client_buffer* out
     });
 }
 
-aauth_status aauth_client_login(aauth_client* client,
-                                const char* email,
-                                const char* password,
-                                aauth_two_factor_callback callback,
-                                void* context,
-                                aauth_account_session** output) {
-    return guard([&] {
-        require(client != nullptr && email != nullptr && password != nullptr && output != nullptr);
-        TwoFactor two_factor;
-        if (callback) {
-            two_factor = [callback, context] {
-                struct Code {
-                    std::array<char, 64> bytes{};
-                    ~Code() {
-                        crypto::wipe(bytes.data(), bytes.size());
-                    }
-                } code;
-                std::size_t size = 0;
-                const auto result = callback(context, code.bytes.data(), code.bytes.size(), &size);
-                if (result != 0) {
-                    throw apple_auth::Error(ErrorCode::authentication,
-                                            "Verification callback canceled");
-                }
-                require(size <= code.bytes.size());
-                return std::string(code.bytes.data(), size);
-            };
-        }
-        auto result = std::unique_ptr<aauth_account_session>(
-            new aauth_account_session{client->value.login(email, password, two_factor)});
-        *output = result.release();
-    });
-}
-
 void aauth_account_session_free(aauth_account_session* session) {
     delete session;
 }
@@ -556,7 +383,7 @@ aauth_status aauth_account_session_from_plist(const std::uint8_t* data,
     });
 }
 
-aauth_status aauth_client_login_v2(aauth_client* client,
+aauth_status aauth_client_login(aauth_client* client,
                                    const char* email,
                                    const char* password,
                                    const aauth_verification_options* supplied,
@@ -808,7 +635,7 @@ aauth_status aauth_client_features(aauth_client_buffer *output) {
 }
 
 aauth_status aauth_store_client_create(const char *directory, aauth_store_protocol protocol,
-                                       const aauth_client_options_v2 *options,
+                                       const aauth_client_options *options,
                                        const aauth_device_headers *headers,
                                        const char *headers_json, aauth_store_client **output) {
     return guard([&] {
@@ -902,14 +729,14 @@ aauth_status aauth_store_session_testflight_context(const aauth_store_session *s
 }
 
 aauth_status aauth_testflight_client_create(const uint8_t *data, size_t size,
-                                            const aauth_client_options_v2 *transport,
+                                            const aauth_client_options *transport,
                                             const char *options_json,
                                             aauth_testflight_client **output) {
     return guard([&] {
 #ifdef APPLE_AUTH_WITH_TESTFLIGHT
         require(output);
         auto result = std::make_unique<aauth_testflight_client>(aauth_testflight_client{
-            TestFlightClient(json_input(data, size), client_options_v2(transport).transport,
+            TestFlightClient(json_input(data, size), client_options(transport).transport,
                              testflight_options(options_json))});
         *output = result.release();
 #else
@@ -925,7 +752,7 @@ aauth_status aauth_testflight_client_create(const uint8_t *data, size_t size,
 }
 
 aauth_status aauth_testflight_client_from_store_cookies(const uint8_t *data, size_t size,
-                                                        const aauth_client_options_v2 *transport,
+                                                        const aauth_client_options *transport,
                                                         const char *options_json,
                                                         aauth_testflight_client **output) {
     return guard([&] {
@@ -933,7 +760,7 @@ aauth_status aauth_testflight_client_from_store_cookies(const uint8_t *data, siz
         require(output);
         auto result = std::make_unique<aauth_testflight_client>(aauth_testflight_client{
             TestFlightClient::from_store_cookies(json_input(data, size),
-                                                 client_options_v2(transport).transport,
+                                                 client_options(transport).transport,
                                                  testflight_options(options_json))});
         *output = result.release();
 #else
@@ -1030,14 +857,14 @@ aauth_status aauth_testflight_client_download(aauth_testflight_client *client, c
 }
 
 aauth_status aauth_appstore_ios_client_create(const uint8_t *data, size_t size,
-                                              const aauth_client_options_v2 *transport,
+                                              const aauth_client_options *transport,
                                               const char *headers_json,
                                               aauth_appstore_ios_client **output) {
     return guard([&] {
 #ifdef APPLE_AUTH_WITH_TESTFLIGHT
         require(output);
         auto result = std::make_unique<aauth_appstore_ios_client>(aauth_appstore_ios_client{
-            AppStoreIosClient(json_input(data, size), client_options_v2(transport).transport,
+            AppStoreIosClient(json_input(data, size), client_options(transport).transport,
                               parse_headers(headers_json))});
         *output = result.release();
 #else
@@ -1132,7 +959,7 @@ aauth_status aauth_appstore_ios_client_download(aauth_appstore_ios_client *clien
 
 aauth_status aauth_appstore_mac_client_create(const aauth_store_session *session,
                                               const char *directory, const char *country,
-                                              const aauth_client_options_v2 *options,
+                                              const aauth_client_options *options,
                                               const aauth_device_headers *headers,
                                               const char *headers_json,
                                               aauth_appstore_mac_client **output) {

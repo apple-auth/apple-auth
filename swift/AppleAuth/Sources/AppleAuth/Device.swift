@@ -20,14 +20,14 @@ internal final class NativeStrings {
 }
 
 public final class Device: @unchecked Sendable {
-    public let directory: URL
+    public let directory: URL?
     public let info: DeviceInfo
     private let queue = DispatchQueue(label: "apple-auth.device")
     private let bridge: NativeBridge
     private var handle: OpaquePointer?
     private let encryptionKey: Data?
 
-    public init(directory: URL, platform: DevicePlatform = .mac,
+    public init(directory: URL? = nil, initialState: Data? = nil, platform: DevicePlatform? = nil,
                 model: String? = nil, macOSVersion: String? = nil, macOSBuild: String? = nil,
                 iOSVersion: String? = nil, iOSBuild: String? = nil,
                 serialNumber: String? = nil, transport: HTTPTransport? = nil,
@@ -35,30 +35,53 @@ public final class Device: @unchecked Sendable {
                 encryptionKey: Data? = nil,
                 clock: @escaping @Sendable () -> Date = { Date() }) throws {
         if let encryptionKey { try SessionCrypto.validate(encryptionKey) }
-        guard directory.isFileURL else { throw AppleAuthError("Device state must use a local directory") }
-        let directory = directory.standardizedFileURL
+        guard directory == nil || directory?.isFileURL == true else {
+            throw AppleAuthError("Device state must use a local directory")
+        }
+        guard directory == nil || initialState == nil else {
+            throw AppleAuthError("Restore state into an in-memory device, without a directory")
+        }
+        let directory = directory?.standardizedFileURL
+        let platform: DevicePlatform = platform ?? (initialState == nil ? .mac : .automatic)
+        let state = try initialState.map { try SessionCrypto.decode($0, key: encryptionKey) }
         let bridge = NativeBridge(transport: transport, clock: clock)
         let headersJSON = String(decoding: try JSONEncoder().encode(headers), as: UTF8.self)
-        let strings = try NativeStrings([directory.path, model, macOSVersion, macOSBuild, serialNumber,
+        let strings = try NativeStrings([directory?.path, model, macOSVersion, macOSBuild, serialNumber,
                                          iOSVersion, iOSBuild, userAgent, clientInfo, headersJSON])
-        var options = aauth_client_options_v2(transport: transportCallback, observer: nil, clock: clockCallback,
+        var options = aauth_client_options(transport: transportCallback, observer: nil, clock: clockCallback,
                                                context: Unmanaged.passUnretained(bridge).toOpaque())
         var mac = aauth_mac_device(model: strings[1], macos_version: strings[2], macos_build: strings[3])
         var iphone = aauth_iphone_device(model: platform == .iphone ? strings[1] : nil,
                                           ios_version: strings[5], ios_build: strings[6])
-        var config = aauth_device_config(platform: aauth_device_platform(rawValue: UInt32(platform.rawValue)),
-                                          mac_device: nil, serial_number: strings[4])
+        var config = aauth_client_config(directory: strings[0], options: nil,
+            platform: aauth_device_platform(rawValue: UInt32(platform.rawValue)),
+            mac_device: nil, iphone_device: nil, serial_number: strings[4],
+            headers: nil, headers_json: strings[9], state: nil, state_size: 0)
         var native: OpaquePointer?
         var overrides = aauth_device_headers(user_agent: strings[7], client_info: strings[8])
         do {
-            try withUnsafePointer(to: &mac) { pointer in
-                if macOSVersion != nil || macOSBuild != nil ||
-                   (platform != .iphone && (platform == .mac || model != nil)) {
-                    config.mac_device = pointer
-                }
-                try withUnsafePointer(to: &iphone) { phone in
-                    try checkClient(aauth_client_create_configured_v5(strings[0], &options, &config, phone,
-                                                                      &overrides, strings[9], &native))
+            try withUnsafePointer(to: &options) { settings in
+                config.options = settings
+                try withUnsafePointer(to: &mac) { pointer in
+                    if macOSVersion != nil || macOSBuild != nil ||
+                       (platform != .iphone && (platform == .mac || model != nil)) {
+                        config.mac_device = pointer
+                    }
+                    try withUnsafePointer(to: &iphone) { phone in
+                        config.iphone_device = phone
+                        try withUnsafePointer(to: &overrides) { headers in
+                            config.headers = headers
+                            if let state {
+                                try state.withUnsafeBytes { bytes in
+                                    config.state = bytes.bindMemory(to: UInt8.self).baseAddress
+                                    config.state_size = bytes.count
+                                    try checkClient(aauth_client_create(&config, &native))
+                                }
+                            } else {
+                                try checkClient(aauth_client_create(&config, &native))
+                            }
+                        }
+                    }
                 }
             }
             guard let native else { throw AppleAuthError("Device initialization returned no client") }
@@ -150,22 +173,34 @@ public final class Device: @unchecked Sendable {
                 select_phone: verification?.selectPhone == nil ? nil : phoneCallback,
                 context: Unmanaged.passUnretained(self.bridge).toOpaque())
             var session: OpaquePointer?
-            try checkClient(aauth_client_login_v2(self.handle, email, password, &options, &session))
+            try checkClient(aauth_client_login(self.handle, email, password, &options, &session))
             guard let session else { throw AppleAuthError("Login returned no session") }
             defer { aauth_account_session_free(session) }
             try self.bridge.activeOperation().checkCancellation()
             let result = try AccountSession(plist: clientData { aauth_account_session_plist(session, $0) })
-            try result.save(to: self.directory.appendingPathComponent("account-session.plist"),
-                            encryptionKey: self.encryptionKey)
+            let saved = try result.serialize(encryptionKey: self.encryptionKey)
+            try saved.withUnsafeBytes { bytes in
+                try checkClient(aauth_client_set_session_data(self.handle, AAUTH_SESSION_ACCOUNT,
+                    bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count))
+            }
             return result
+        }
+    }
+
+    /// Snapshot identity, ADI, Store provisioning and automatically saved account bytes.
+    /// Uses this device's optional encryption key; callbacks and HTTP caches are not saved.
+    public func serializeState() async throws -> Data {
+        try await perform {
+            let data = try clientData { aauth_client_state(self.handle, $0) }
+            return try SessionCrypto.encode(data, key: self.encryptionKey)
         }
     }
 
     public func loadSession() async throws -> AccountSession? {
         try await perform {
-            let file = self.directory.appendingPathComponent("account-session.plist")
-            guard FileManager.default.fileExists(atPath: file.path) else { return nil }
-            return try AccountSession.load(from: file, encryptionKey: self.encryptionKey)
+            let data = try clientData { aauth_client_session_data(self.handle, AAUTH_SESSION_ACCOUNT, $0) }
+            guard !data.isEmpty else { return nil }
+            return try AccountSession.deserialize(data, encryptionKey: self.encryptionKey)
         }
     }
 

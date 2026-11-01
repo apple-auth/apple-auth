@@ -176,8 +176,8 @@ with Device.mac("my-mac", headers={
 
 Swift's `Device` initializer and `open()` accept `userAgent`, `clientInfo` and
 `headers: [String: String]`. The C API provides
-`aauth_client_create_configured_v5()` with a JSON header object; older entry points
-remain available.
+`aauth_client_create(&config, &client)` with `aauth_client_config.headers_json`.
+It is the single creation entry point; use the current headers and native library together.
 
 Developer Session and trusted-device/SMS 2FA use the same header overrides.
 The default Xcode profile is `User-Agent: Xcode`,
@@ -294,8 +294,9 @@ no GrandSlam platform trailer. OTP format versions and ADI platform IDs are
 separate protocol fields.
 
 Keep state directories private and copy them whole when moving identities.
-GrandSlam uses `adi.pb`; Store uses `store/adi.pb`. Saved platform/model/OS/serial
-values must match when reopening.
+GrandSlam uses `adi.pb`; Store uses `store/adi.pb`. Saved platform/model/serial
+values must match when reopening; OS version/build can be updated together.
+For RAM-only state and optional encrypted snapshots, see [in-memory state](in-memory-state.md).
 Loading a saved account session does not check server-side expiry. GrandSlam supports
 trusted-device and SMS verification. Optional C++/CLI app downloads are documented
 in [the complete guide](full-docs.md#authentication-and-download-workflows).

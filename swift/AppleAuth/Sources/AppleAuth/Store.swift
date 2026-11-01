@@ -146,9 +146,9 @@ internal final class StoreRunner: @unchecked Sendable {
 
 internal func withStoreOptions<Value>(_ bridge: NativeBridge, userAgent: String? = nil,
     clientInfo: String? = nil, headers: [String: String] = [:],
-    _ body: (UnsafePointer<aauth_client_options_v2>, UnsafePointer<aauth_device_headers>, String) throws -> Value) throws -> Value {
+    _ body: (UnsafePointer<aauth_client_options>, UnsafePointer<aauth_device_headers>, String) throws -> Value) throws -> Value {
     let strings = try NativeStrings([userAgent, clientInfo])
-    var options = aauth_client_options_v2(transport: transportCallback, observer: nil, clock: clockCallback,
+    var options = aauth_client_options(transport: transportCallback, observer: nil, clock: clockCallback,
         context: Unmanaged.passUnretained(bridge).toOpaque())
     var overrides = aauth_device_headers(user_agent: strings[0], client_info: strings[1])
     let json = String(decoding: try JSONEncoder().encode(headers), as: UTF8.self)

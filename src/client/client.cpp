@@ -1,4 +1,5 @@
 #include "client/client_internal.hpp"
+#include "client/state_storage.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -195,52 +196,40 @@ void check_status(const Json& response) {
     }
 }
 
-std::filesystem::path saved_profile_path(const std::filesystem::path& directory) {
-    const auto canonical = directory / "adi.pb";
-    if (std::filesystem::exists(canonical) || !std::filesystem::is_directory(directory)) {
-        return canonical;
-    }
-    std::optional<std::filesystem::path> legacy;
-    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-        const auto name = entry.path().filename().u8string();
-        if (!entry.is_regular_file() || name.size() != 15 || !name.starts_with(u8"adi-") ||
-            !name.ends_with(u8".pb") ||
-            std::u8string_view(name).substr(4, 8).find_first_not_of(u8"0123456789abcdefABCDEF") !=
-                std::u8string_view::npos) {
-            continue;
-        }
+std::string saved_profile_name(const StateStorage& storage) {
+    if (storage.exists("adi.pb")) return "adi.pb";
+    std::optional<std::string> legacy;
+    for (const auto& name : storage.names()) {
+        if (name.size() != 15 || !name.starts_with("adi-") || !name.ends_with(".pb") ||
+            name.substr(4, 8).find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) continue;
         require(!legacy, "Multiple legacy ADI profiles; use a separate device directory");
-        legacy = entry.path();
+        legacy = name;
     }
-    return legacy.value_or(canonical);
+    return legacy.value_or("adi.pb");
 }
 
-Profile load_grandslam_profile(const std::filesystem::path& path,
-                               const HardwareId& hardware,
-                               ProfilePlatform platform) {
-    auto profile = Profile::import_file(read_file(path), hardware, path.filename().string());
+Profile load_grandslam_profile(StateStorage& storage, const std::string& name,
+                               const HardwareId& hardware, ProfilePlatform platform) {
+    auto profile = Profile::import_file(storage.read(name), hardware, name);
     require(profile.kind() == ProfileKind::grandslam, "State file has an unsupported profile");
     require(profile.platform() == platform, "State profile differs from the selected ADI platform");
-    const auto canonical = path.parent_path() / profile.filename();
-    if (path != canonical) {
-        // Filenames bind the file key; authenticate the re-encrypted copy before removal.
-        write_private(canonical, profile.export_file(hardware, profile.filename()));
+    if (name != profile.filename()) {
+        const std::string canonical(profile.filename());
+        storage.write(canonical, profile.export_file(hardware, canonical));
         try {
-            (void)Profile::import_file(read_file(canonical), hardware, profile.filename());
+            (void)Profile::import_file(storage.read(canonical), hardware, canonical);
         } catch (...) {
-            std::error_code ignored;
-            std::filesystem::remove(canonical, ignored);
+            try { storage.remove(canonical); } catch (...) {}
             throw;
         }
-        std::error_code ignored;
-        std::filesystem::remove(path, ignored);
+        storage.remove(name);
     }
     return profile;
 }
 } // namespace
 
 struct Client::Impl {
-    std::filesystem::path directory;
+    StateStorage storage;
     ClientOptions options;
     netdetail::Json identity;
     const DeviceDescription* description = nullptr;
@@ -257,28 +246,28 @@ struct Client::Impl {
                            "Use an explicit Configurator StoreClient");
         auto& selected = protocol == StoreProtocol::macos_accounts ? mac_store : store;
         if (!selected) {
-            selected = std::make_unique<StoreClient>(directory / "store", protocol, options);
+            selected.reset(new StoreClient(storage.child("store"), protocol, options));
         }
         return *selected;
     }
 
-    Impl(std::filesystem::path path, ClientOptions config)
-        : directory(std::move(path)), options(std::move(config)) {
+    Impl(StateStorage state, ClientOptions config)
+        : storage(std::move(state)), options(std::move(config)) {
         options.transport = netdetail::configured_transport(options);
         if (!options.clock) {
             options.clock = [] {
                 return static_cast<std::int64_t>(std::time(nullptr));
             };
         }
-        const auto identity_path = directory / "identity.json";
-        const auto profile_path = saved_profile_path(directory);
-        const bool new_identity = !std::filesystem::exists(identity_path);
+        const std::string identity_path = "identity.json";
+        const auto profile_path = saved_profile_name(storage);
+        const bool new_identity = !storage.exists(identity_path);
         bool identity_upgraded = false;
         const auto* requested = options.device_platform == DevicePlatform::automatic
                                     ? nullptr
                                     : &describe_device(options.device_platform);
         if (!new_identity) {
-            identity = netdetail::Json::parse(netdetail::read_file(identity_path));
+            identity = netdetail::Json::parse(storage.read(identity_path));
             const auto version = identity.value("version", 0);
             netdetail::require(version == 1 || version == 2 || version == 3 || version == 4,
                                "Unsupported device identity version");
@@ -297,13 +286,13 @@ struct Client::Impl {
                                "Invalid Android device identity");
             if (provisioning_platform() == ProfilePlatform::android && version != 4) {
                 netdetail::require(
-                    !std::filesystem::exists(profile_path),
+                    !storage.exists(profile_path),
                     "Legacy Android identity uses Windows ADI; use a new state directory");
                 identity["version"] = 4;
                 identity_upgraded = true;
             }
         } else {
-            netdetail::require(!std::filesystem::exists(profile_path),
+            netdetail::require(!storage.exists(profile_path),
                                "Device identity is missing beside an existing profile");
             description = requested ? requested : &describe_device(DevicePlatform::windows);
             identity = {
@@ -387,20 +376,20 @@ struct Client::Impl {
         const auto decoded = netdetail::unhex(identity.at("hardware_hash").get<std::string>());
         netdetail::require(decoded.size() == hardware.size(), "Invalid hardware binding");
         std::copy(decoded.begin(), decoded.end(), hardware.begin());
-        if (std::filesystem::exists(profile_path)) {
+        if (storage.exists(profile_path)) {
             netdetail::require(
                 identity.contains("routing_info") && identity.at("routing_info").is_string() &&
                     !identity.at("routing_info").get_ref<const std::string&>().empty(),
                 "Provisioning metadata is incomplete");
-            profile = load_grandslam_profile(profile_path, hardware, provisioning_platform());
+            profile = load_grandslam_profile(storage, profile_path, hardware, provisioning_platform());
         }
         if (new_identity || identity_upgraded) {
             save_identity();
         }
     }
 
-    void save_identity() const {
-        netdetail::write_private(directory / "identity.json", netdetail::bytes(identity.dump(2)));
+    void save_identity() {
+        storage.write("identity.json", netdetail::bytes(identity.dump(2)));
     }
 
     ProfilePlatform provisioning_platform() const noexcept {
@@ -494,7 +483,7 @@ struct Client::Impl {
             "Missing routing information");
         identity["routing_info"] = finished.at("X-Apple-I-MD-RINFO");
         save_identity();
-        netdetail::write_private(directory / completed.filename(), encoded);
+        storage.write(std::string(completed.filename()), encoded);
         profile = std::move(completed);
     }
 
@@ -509,8 +498,32 @@ struct Client::Impl {
     }
 };
 
+Client::Client(ClientOptions options)
+    : impl_(std::make_unique<Impl>(netdetail::StateStorage{}, std::move(options))) {}
+
 Client::Client(std::filesystem::path directory, ClientOptions options)
-    : impl_(std::make_unique<Impl>(std::move(directory), std::move(options))) {}
+    : impl_(std::make_unique<Impl>(netdetail::StateStorage(std::move(directory)), std::move(options))) {}
+
+Client::Client(ByteView state, ClientOptions options, std::optional<ByteView> key)
+    : impl_(std::make_unique<Impl>(netdetail::StateStorage(key ? decrypt_session(state, *key) : state),
+                                   std::move(options))) {}
+
+Bytes Client::serialize_state(std::optional<ByteView> key) const {
+    const auto state = impl_->storage.serialize();
+    return key ? encrypt_session(state, *key) : state;
+}
+
+Bytes Client::session_data(SessionKind kind) const {
+    netdetail::require(kind == SessionKind::account || kind == SessionKind::store, "Invalid session kind");
+    const auto* name = kind == SessionKind::account ? "account-session.plist" : "store-account-session.plist";
+    return impl_->storage.exists(name) ? impl_->storage.read(name, netdetail::maximum_state_size) : Bytes{};
+}
+
+void Client::set_session_data(ByteView data, SessionKind kind) {
+    netdetail::require(kind == SessionKind::account || kind == SessionKind::store, "Invalid session kind");
+    const auto* name = kind == SessionKind::account ? "account-session.plist" : "store-account-session.plist";
+    impl_->storage.write(name, data);
+}
 
 Client::~Client() = default;
 Client::Client(Client&&) noexcept = default;

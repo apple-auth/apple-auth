@@ -31,17 +31,25 @@ class Device:
                  user_agent: str | None = None, client_info: str | None = None,
                  headers: dict[str, str] | None = None,
                  encryption_key: bytes | None = None,
+                 in_memory: bool = False, initial_state: bytes | None = None,
                  library: Library | str | os.PathLike | None = None,
                  transport: Callable[[HttpRequest], HttpResponse] | None = None,
                  clock: Callable[[], int] | None = None):
         from .crypto import _key
         self._encryption_key = _key(encryption_key) if encryption_key is not None else None
-        self._state = (Path(state) if state is not None else _new_device_directory()).expanduser().resolve()
+        if in_memory and state is not None:
+            raise ValueError("An in-memory device cannot have a state directory")
+        if initial_state is not None and not in_memory:
+            raise ValueError("Restore snapshots into an in-memory device")
+        self._state = None if in_memory else (Path(state) if state is not None else _new_device_directory()).expanduser().resolve()
         self._library = library if isinstance(library, Library) else Library(library)
         metadata = (dict(iphone_model=model, ios_version=os_version, ios_build=os_build)
                     if platform == "iphone" else
                     dict(mac_model=model, macos_version=os_version, macos_build=os_build))
-        self._client = self._library.client(self._state, device_platform=platform, **metadata,
+        if initial_state is not None:
+            from .crypto import _decode
+            initial_state = _decode(initial_state, self._encryption_key, self._library)
+        self._client = self._library.client(self._state, initial_state=initial_state, device_platform=platform, **metadata,
             serial_number=serial_number, user_agent=user_agent, client_info=client_info, headers=headers,
             transport=transport, clock=clock)
         try:
@@ -54,6 +62,13 @@ class Device:
             raise
         self._session: Session | None = None
         self._store_session: StoreSession | None = None
+
+    @classmethod
+    def memory(cls, *, initial_state: bytes | None = None, platform: str | None = None, **options) -> Device:
+        """Keep identity/ADI in RAM; optionally restore a serialized snapshot."""
+        return cls(in_memory=True, initial_state=initial_state,
+                   platform=platform if platform is not None else ("mac" if initial_state is None else None),
+                   **options)
 
     @classmethod
     def mac(cls, state: str | os.PathLike | None = None, *, model: str | None = None,
@@ -91,7 +106,7 @@ class Device:
         return cls(path, **options)
 
     @property
-    def state(self) -> Path:
+    def state(self) -> Path | None:
         return self._state
 
     @property
@@ -101,9 +116,12 @@ class Device:
     @property
     def session(self) -> Session | None:
         """Last saved session. Loading it does not check token expiry with Apple."""
-        path = self.state / "account-session.plist"
-        if self._session is None and path.is_file():
-            self._session = Session.load(path, encryption_key=self._encryption_key, library=self._library)
+        if self._session is None:
+            data = self._client.session_data()
+            if data:
+                from .crypto import _decode
+                path = self.state / "account-session.plist" if self.state is not None else None
+                self._session = Session._decode(_decode(data, self._encryption_key, self._library), path)
         return self._session
 
     def provision(self) -> Device:
@@ -113,10 +131,13 @@ class Device:
 
     @property
     def store_session(self) -> StoreSession | None:
-        path = self.state / "store-account-session.plist"
-        if (self._store_session is None or not self._store_session._handle) and path.is_file():
-            self._store_session = StoreSession.load(path, encryption_key=self._encryption_key,
-                                                   library=self._client._library)
+        if self._store_session is None or not self._store_session._handle:
+            data = self._client.session_data(kind="store")
+            if data:
+                self._store_session = StoreSession.deserialize(data, encryption_key=self._encryption_key,
+                                                               library=self._library)
+                if self.state is not None:
+                    self._store_session._path = self.state / "store-account-session.plist"
         return self._store_session
 
     def provision_store(self) -> Device:
@@ -136,7 +157,10 @@ class Device:
         try:
             session = self._client.login_store(email, password, two_factor)
             try:
-                session.save(self.state / "store-account-session.plist", encryption_key=self._encryption_key)
+                self._client.set_session_data(session.serialize(encryption_key=self._encryption_key), kind="store")
+                if self.state is not None:
+                    session._path = self.state / "store-account-session.plist"
+                    session._encryption_key = self._encryption_key
             except BaseException:
                 session.close()
                 raise
@@ -156,6 +180,8 @@ class Device:
         if session._path is not None:
             key = session._encryption_key if session._encryption_key is not None else self._encryption_key
             session.save(session._path, encryption_key=key)
+        elif session is self._store_session:
+            self._client.set_session_data(session.serialize(encryption_key=self._encryption_key), kind="store")
         return response
 
     def login_store_with_pet(self, *, email: str, account: Session | None = None) -> StoreSession:
@@ -190,13 +216,17 @@ class Device:
             two_factor = lambda: input("Trusted-device verification code: ").strip()
         try:
             with self._client.login(email, password, two_factor) as native_session:
-                path = self.state / "account-session.plist"
+                path = self.state / "account-session.plist" if self.state is not None else None
                 session = Session._decode(native_session.plist(), path)
-                native_session.save(path, encryption_key=self._encryption_key)
+                self._client.set_session_data(native_session.serialize(encryption_key=self._encryption_key))
                 self._session = session
                 return session
         finally:
             password = ""
+
+    def serialize_state(self) -> bytes:
+        """Snapshot identity, ADI, Store provisioning and auto-saved account bytes."""
+        return self._client.serialize_state(encryption_key=self._encryption_key)
 
     def close(self):
         self._client.close()

@@ -13,6 +13,7 @@ native signatures; the focused guides linked below cover protocol internals.
 - [Identities and sessions](#identities-and-sessions)
 - [Build and install](#build-and-install)
 - [Account authentication](#account-authentication)
+- [In-memory device state](#in-memory-device-state)
 - [Authentication and download workflows](#authentication-and-download-workflows)
 - [Store bindings](#store-bindings)
 - [Saved files and contexts](#saved-files-and-contexts)
@@ -29,7 +30,7 @@ native signatures; the focused guides linked below cover protocol internals.
 | --- | --- | --- | --- | --- | --- |
 | Persistent identity, provisioning and anisette | Yes | Yes | `Device`, `AsyncDevice` | `Device` | `apple-auth provision` |
 | GrandSlam login and account-session persistence | Yes | Yes | Yes | Yes | `apple-auth login` |
-| GrandSlam trusted-device / SMS verification selection | `VerificationOptions` | `aauth_client_login_v2` | Code callback; no method selector | `Verification` | Trusted-device code callback |
+| GrandSlam trusted-device / SMS verification selection | `VerificationOptions` | `aauth_client_login` | Code callback; no method selector | `Verification` | Trusted-device code callback |
 | Developer Services token and headers | Yes | Yes | Yes | Yes | No command |
 | Android Apple Music Store login and signed requests | Yes | Yes | Yes | `StoreClient` | No command |
 | Mac PET to Mac Accounts Store login | Yes | Yes | Yes | `Device.loginStoreWithPET` | `apple-auth-store` |
@@ -326,7 +327,7 @@ auto developer = device.developer_session(account);
 auto headers = device.developer_headers(developer);
 ```
 
-C callers pass the same JSON header map to `aauth_client_create_configured_v5()`.
+C callers pass the same JSON header map to `aauth_client_create()`.
 The default version is a protocol profile, independent of the host Xcode install;
 applications can select their own version without rebuilding the SDK.
 
@@ -350,6 +351,15 @@ Verification is read interactively when requested. The CLI writes the account
 session to `mac-device/account-session.plist`. It accepts `--mac-model`,
 `--macos-version`, `--macos-build`, `--user-agent`, `--client-info` and repeatable
 `--header 'Name: value'` options. It has no Developer Services command.
+
+## In-memory device state
+
+C++ `Client(options)` and Swift `Device()` keep state in RAM. The file-backed
+constructors remain available. Python exposes `Device.memory()` and
+`AsyncDevice.memory()`; low-level `Library.client(directory=None)` also uses RAM.
+Snapshots include identity, ADI, Store provisioning and saved session slots, with
+optional AES-256-GCM encryption. Callbacks, header overrides and HTTP caches are
+not serialized. [Complete examples and snapshot format](in-memory-state.md).
 
 ## Session serialization and optional encryption
 
@@ -828,7 +838,7 @@ envelopes, account plist fields and SAP signature framing.
 
 Python factories, `Device.open()` and `AsyncDevice` accept `user_agent`,
 `client_info` and `headers`. Swift uses `userAgent`, `clientInfo`, `headers`;
-C++ uses `ClientOptions` and C provides `aauth_client_create_configured_v5()`.
+C++ uses `ClientOptions` and C provides `aauth_client_create()`.
 Explicit dictionary headers take priority over the shortcuts and protocol
 defaults. Header names are case-insensitive; duplicate names with different
 casing are rejected. Values must be printable ASCII, at most 4096 bytes each,
@@ -891,7 +901,9 @@ synthetic IDs and mock responses do not authenticate an account.
 | --- | --- | --- |
 | `Library.path` | `None` | Shared client library path, e.g. `Path("install/bin/apple_auth_client.dll")`; `None` uses discovery. |
 | `Library.dll_directories` | `()` | Iterable of dependency directories, e.g. `(Path("install/bin"),)`; used for DLL loading on Windows. |
-| `state` / native `directory` | `None` for `Device`; required for native `Client` | Persistent directory, e.g. `"my-macbook"`. Omitted `state` allocates a directory under the user's state root. |
+| `state` / native `directory` | `None` | `Device` allocates a private directory unless `in_memory=True`. Native `Client` uses RAM when `directory=None`. |
+| `in_memory` | `False` | `Device`/`AsyncDevice` constructor: `True` selects RAM and forbids a directory. `Device.memory()` / `AsyncDevice.memory()` set it automatically. |
+| `initial_state` | `None` | Optional snapshot bytes for RAM restore. High-level devices decrypt with their configured key; native `Client` expects plaintext bytes. |
 | `platform` / native `device_platform` | `None` | `"mac"`, `"iphone"`, `"windows"`, `"android"`; `None` reuses saved state or selects Windows for a new generic device. |
 | `model` | `None` | Mac/iPhone model, e.g. `"MacBookAir10,1"`; use `"iPhone12,1"` with the iPhone preset. |
 | `os_version` | `None` | Generic constructor name; factory aliases are `macos="14.4.1"` and `ios="17.4.1"`. |
@@ -979,7 +991,7 @@ with library.client(
 
 For native iPhone configuration, select `device_platform="iphone"`, set
 `iphone_model="iPhone12,1"`, `ios_version="17.4.1"`, `ios_build="21E236"`, and leave
-all three Mac metadata arguments `None`. Native `Client(library, directory, ...)`
+all three Mac metadata arguments `None`. Native `Client(library, directory=None, initial_state=None, ...)`
 accepts the same options. Its `login(email, password, two_factor=None)` requires
 a password and does not supply the high-level `Device` prompts.
 
@@ -1156,8 +1168,9 @@ disables the optional expected-bundle match while retaining archive checks.
 
 | Initializer parameter | Default | Meaning / example |
 | --- | --- | --- |
-| `directory` | Required | App-private local `URL(fileURLWithPath: ...)`. |
-| `platform` | `.mac` | `.automatic`, `.windows`, `.mac`, `.iphone`, `.android`. `.automatic` reuses saved state or selects Windows for a new identity. |
+| `directory` | `nil` | RAM when omitted; a local file URL selects persistent storage. |
+| `initialState` | `nil` | Snapshot `Data` to restore into RAM; cannot be combined with `directory`. Uses `encryptionKey` when protected. |
+| `platform` | `nil` | Mac for a new device, saved preset for an initial snapshot. Explicit `.automatic`, `.windows`, `.mac`, `.iphone`, `.android` remain available. |
 | `model` | `nil` | `"MacBookAir10,1"` for Mac, `"iPhone12,1"` for iPhone. |
 | `macOSVersion`, `macOSBuild` | `nil` | `"14.4.1"`, `"23E224"`; leave `nil` for other presets. |
 | `iOSVersion`, `iOSBuild` | `nil` | `"17.4.1"`, `"21E236"` with `.iphone`; leave `nil` for other presets. |
@@ -1184,12 +1197,12 @@ func configuredDevice(directory: URL) throws -> Device {
         ])
     }
     return try Device(
-        directory: directory, platform: .mac, model: "MacBookAir10,1",
+        directory: directory, initialState: nil, platform: .mac, model: "MacBookAir10,1",
         macOSVersion: "14.4.1", macOSBuild: "23E224", iOSVersion: nil, iOSBuild: nil,
         serialNumber: "DEMO-MAC-001", transport: mockTransport,
         userAgent: "MyClient/1.0", clientInfo: nil,
         headers: ["Accept-Language": "pl-PL", "X-Apple-I-TimeZone": "Europe/Warsaw"],
-        clock: { Date() }
+        encryptionKey: nil, clock: { Date() }
     )
 }
 ```
@@ -1393,7 +1406,9 @@ apple_auth::AccountSession verified_login(apple_auth::Client& client,
 
 | API | Complete argument shape |
 | --- | --- |
-| `Client` | `Client(directory, options={})` |
+| `Client` | `Client(options={})` for RAM; `Client(directory, options={})` for files; `Client(state_bytes, options={}, encryption_key={})` restores into RAM. |
+| Client snapshot | `serialize_state(encryption_key={})`; keys are optional 32-byte `ByteView` values. |
+| Client session slots | `session_data(kind=SessionKind::account)`; `set_session_data(bytes, kind=SessionKind::account)`; alternate kind `SessionKind::store`. |
 | `Client::login`, `login_store` | `(email, password, two_factor)`; code callback has no arguments and returns `std::string`. |
 | PET / Developer | `login_store_with_pet(email, account)`, `developer_session(account)`, `developer_headers(developer)` |
 | Signed client request | `client.store_request(session, HttpRequest{"account-flags", "GET", {}, {}})`; the convenience client uses Android Music. |
@@ -1452,19 +1467,34 @@ status before reading outputs; the snippets below show argument layouts.
 
 | Struct / field | Meaning / example |
 | --- | --- |
-| `aauth_client_options_v2.transport` | `aauth_transport_callback_v2`; `NULL` selects built-in transport. |
+| `aauth_client_options.transport` | `aauth_transport_callback`; `NULL` selects built-in transport. |
 | `observer` | Optional callback `(context, method, url, status, seconds)`; timing is in seconds. |
 | `clock` | Optional callback `(context) -> int64_t` Unix seconds. |
 | `context` | Caller-owned `void*`, forwarded unchanged to those callbacks. |
 | `aauth_mac_device` | `model`, `macos_version`, `macos_build`; optional UTF-8 strings. |
 | `aauth_iphone_device` | `model`, `ios_version`, `ios_build`; optional UTF-8 strings. |
-| `aauth_device_config` | `platform`, `mac_device`, `serial_number`; explicit identity must agree with saved state. |
+| `aauth_client_config` | Zero-initialize; `directory`, `options`, `platform`, `mac_device`, `iphone_device`, `serial_number`, `headers`, `headers_json`, `state`, `state_size`. See below. |
 | `aauth_device_headers` | `user_agent`, `client_info`; `NULL`/empty preserves defaults. |
 | `headers_json` | Optional JSON object of strings, e.g. `{"Accept-Language":"pl-PL"}`. |
 | `aauth_verification_options` | `method`, `phone_number_id`, `code`, `select_phone`, `context`; the verification context is independent of transport context. |
 | `aauth_http_request` | `url`, `method`, `headers_json`, `body`, `body_size`; body size is in bytes. |
-| `aauth_http_response_v2` | `status`, allocated `body`, allocated `headers_json`; response headers are a JSON array of pairs. |
+| `aauth_http_response` | `status`, allocated `body`, allocated `headers_json`; response headers are a JSON array of pairs. |
 | `aauth_client_buffer` | `data`, `size`; release SDK-owned output with `aauth_client_buffer_free(&buffer)`. |
+
+There is one creation entry point, `aauth_client_create`. Versioned creation,
+login, transport and options aliases have been removed; rebuild all bindings and
+consumers against the current headers and native library.
+
+| `aauth_client_config` field | Default / behavior |
+| --- | --- |
+| `directory` | `NULL`: RAM. A nonempty UTF-8 path selects private file storage. |
+| `options` | `NULL`: built-in HTTPS/system clock, no observer. |
+| `platform` | `AAUTH_DEVICE_AUTOMATIC`: saved preset, or Windows for a new identity. |
+| `mac_device`, `iphone_device` | Optional metadata pointers; empty fields reuse saved/default values. |
+| `serial_number` | `NULL`: reuse saved value; new identities omit it. Empty/`"0"` means absent. |
+| `headers` | Optional `aauth_device_headers` shortcuts for user agent/client info. |
+| `headers_json` | Optional JSON string map; explicit fields override defaults. |
+| `state`, `state_size` | Optional plaintext snapshot bytes to restore into RAM; cannot be combined with `directory`. Empty snapshots are invalid. |
 
 All device and transport fields in a C configuration function:
 
@@ -1472,20 +1502,26 @@ All device and transport fields in a C configuration function:
 #include <apple_auth/client_c_api.h>
 
 aauth_status configure_c_client(const char* directory,
-    aauth_transport_callback_v2 transport, aauth_http_observer observer,
+    aauth_transport_callback transport, aauth_http_observer observer,
     aauth_clock_callback clock, void* context, aauth_client** output) {
-    const aauth_client_options_v2 options = {transport, observer, clock, context};
+    const aauth_client_options options = {transport, observer, clock, context};
     const aauth_mac_device mac = {"MacBookAir10,1", "14.4.1", "23E224"};
     const aauth_iphone_device iphone = {NULL, NULL, NULL};
-    const aauth_device_config device = {AAUTH_DEVICE_MAC, &mac, "DEMO-MAC-001"};
     const aauth_device_headers overrides = {"MyClient/1.0", NULL};
-    return aauth_client_create_configured_v5(
-        directory, &options, &device, &iphone, &overrides,
-        "{\"Accept-Language\":\"pl-PL\"}", output);
+    aauth_client_config config = {0};
+    config.directory = directory; // NULL selects RAM.
+    config.options = &options;
+    config.platform = AAUTH_DEVICE_MAC;
+    config.mac_device = &mac;
+    config.iphone_device = &iphone;
+    config.serial_number = "DEMO-MAC-001";
+    config.headers = &overrides;
+    config.headers_json = "{\"Accept-Language\":\"pl-PL\"}";
+    return aauth_client_create(&config, output);
 }
 ```
 
-For an iPhone, use `AAUTH_DEVICE_IPHONE`, `device.mac_device=NULL`, and
+For an iPhone, use `AAUTH_DEVICE_IPHONE`, `config.mac_device=NULL`, and
 `const aauth_iphone_device iphone = {"iPhone12,1", "17.4.1", "21E236"};`. Other device constants are `AAUTH_DEVICE_AUTOMATIC`,
 `AAUTH_DEVICE_WINDOWS`, `AAUTH_DEVICE_ANDROID`. Store constants are
 `AAUTH_STORE_ANDROID_MUSIC`, `AAUTH_STORE_MACOS_ACCOUNTS`, `AAUTH_STORE_CONFIGURATOR`.
@@ -1501,13 +1537,13 @@ aauth_status c_verified_login(aauth_client* client, const char* email, const cha
     const aauth_verification_options verification = {
         AAUTH_VERIFY_SMS, 0, request_code, choose_phone, verification_context
     };
-    return aauth_client_login_v2(client, email, password, &verification, output);
+    return aauth_client_login(client, email, password, &verification, output);
 }
 ```
 
 | Callback | Arguments and result |
 | --- | --- |
-| Transport | `int send(void* context, const aauth_http_request* request, aauth_http_response_v2* response)`; return `0` on success, nonzero on failure. Request data is valid only during the call. |
+| Transport | `int send(void* context, const aauth_http_request* request, aauth_http_response* response)`; return `0` on success, nonzero on failure. Request data is valid only during the call. |
 | Verification code | `int code(void* context, char* output, size_t capacity, size_t* written)`; copy code bytes, set `*written`, and return `0`, or nonzero to cancel. Do not count a terminating NUL. |
 | Phone selection | `int choose(void* context, const char* phones_json, int64_t* selected)`; JSON entries have `id`, `display_number`. Write a listed ID and return `0`, or nonzero to cancel. |
 | Clock | `int64_t now(void* context)`; Unix seconds. |
@@ -1520,12 +1556,12 @@ Allocation and all response fields in an offline transport callback:
 #include <string.h>
 
 int c_mock_transport(void* context, const aauth_http_request* request,
-                     aauth_http_response_v2* response) {
+                     aauth_http_response* response) {
     static const char body[] = "{}";
     static const char headers[] = "[[\"Content-Type\",\"application/json\"]]";
     (void)context;
     if (!request || !response) { return -1; }
-    *response = (aauth_http_response_v2){0};
+    *response = (aauth_http_response){0};
     if (aauth_client_buffer_alloc(sizeof(body) - 1, &response->body) != AAUTH_OK) { return -1; }
     if (aauth_client_buffer_alloc(sizeof(headers) - 1, &response->headers_json) != AAUTH_OK) { return -1; }
     memcpy(response->body.data, body, sizeof(body) - 1);
@@ -1537,9 +1573,8 @@ int c_mock_transport(void* context, const aauth_http_request* request,
 
 The SDK takes ownership of both response buffers even on callback failure. Use
 `aauth_client_buffer_alloc`, not `malloc`, for these response fields. The mock
-illustrates ownership/shape only and cannot complete authentication. Legacy
-`aauth_client_options` uses the older response type without repeated headers;
-prefer v2 for Store cookies.
+illustrates ownership/shape only and cannot complete authentication. All transports
+use this response type, including duplicate headers needed for Store cookies.
 
 ### C account, Store and download call arguments
 
@@ -1550,12 +1585,12 @@ are outputs for initially `NULL` opaque pointers. Inputs named `session`,
 
 | Function(s) | Full call argument example |
 | --- | --- |
-| Basic creation aliases | `aauth_client_create(directory, &legacy_options, &client)`; `aauth_client_create_with_platform(directory, &legacy_options, AAUTH_DEVICE_MAC, &client)` |
-| Device/config aliases | `aauth_client_create_with_device(directory, &legacy_options, AAUTH_DEVICE_MAC, &mac, &client)`; `aauth_client_create_configured(directory, &legacy_options, &device_config, &client)` |
-| v2/v3/v4 aliases | `aauth_client_create_configured_v2(directory, &options, &device_config, &client)`; v3 adds `&iphone` before output; v4 additionally adds `&overrides` before output. v5 is shown above. |
+| Client creation | `aauth_client_create(&config, &client)`; `aauth_client_create(NULL, &client)` creates a new in-memory Windows identity. |
+| State snapshot | `aauth_client_state(client, &output)`; restore with `config.state=data`, `config.state_size=size`, `config.directory=NULL`. |
+| Saved session bytes | `aauth_client_session_data(client, AAUTH_SESSION_ACCOUNT, &output)`; `aauth_client_set_session_data(client, AAUTH_SESSION_STORE, data, size)`. |
 | Identity/header queries | `aauth_client_device_platform(client, &platform)`; `aauth_client_mac_device(client, &output)`; `aauth_client_device_info(client, &output)`; `aauth_client_headers(client, &output)` |
 | Provisioning conveniences | `aauth_client_provision(client)`; `aauth_client_store_provision(client)`; `aauth_client_store_headers(client, &output)` |
-| Legacy account login | `aauth_client_login(client, email, password, request_code, context, &account)` |
+| Account login | `aauth_client_login(client, email, password, &verification, &account)`; `NULL` verification uses defaults without a code callback. |
 | Existing account | `aauth_account_session_from_plist(data, size, &account)`; `aauth_account_session_save(account, path)`; `aauth_account_session_plist(account, &output)` |
 | Developer exchange/headers | `aauth_client_developer_session(client, account, &output)`; `aauth_client_developer_headers(client, account_id, token, expires_at_ms, &output)`; expiry is Unix milliseconds, `0` if absent. |
 | Music Store conveniences | `aauth_client_store_login(client, email, password, request_code, context, &session)`; `aauth_client_store_request(client, session, &request, &output)` |

@@ -33,21 +33,12 @@ typedef struct aauth_http_request {
     size_t body_size;
 } aauth_http_request;
 
+// Response headers preserve duplicates, including Set-Cookie.
 typedef struct aauth_http_response {
     long status;
     aauth_client_buffer body;
-} aauth_http_response;
-
-// Extended transport preserves repeated response headers.
-typedef struct aauth_http_response_v2 {
-    long status;
-    aauth_client_buffer body;
     aauth_client_buffer headers_json; // JSON array of [name, value] pairs; allocate like body.
-} aauth_http_response_v2;
-
-typedef int (*aauth_transport_callback_v2)(void* context,
-                                           const aauth_http_request* request,
-                                           aauth_http_response_v2* response);
+} aauth_http_response;
 
 // All callbacks are synchronous. Request pointers are valid for the callback only.
 // A custom transport allocates its response with aauth_client_buffer_alloc;
@@ -70,13 +61,6 @@ typedef struct aauth_client_options {
     void* context;
 } aauth_client_options;
 
-typedef struct aauth_client_options_v2 {
-    aauth_transport_callback_v2 transport;
-    aauth_http_observer observer;
-    aauth_clock_callback clock;
-    void* context;
-} aauth_client_options_v2;
-
 typedef struct aauth_mac_device {
     // NULL or empty fields reuse saved values, or defaults for a new Mac identity.
     const char* model;
@@ -95,12 +79,26 @@ typedef struct aauth_device_headers {
     const char* client_info;
 } aauth_device_headers;
 
-typedef struct aauth_device_config {
+// Zero-initialize. All strings, metadata and state bytes are copied during create.
+// NULL directory selects RAM; state restores a snapshot into RAM and cannot be
+// combined with a directory. NULL config creates a new in-memory Windows identity.
+typedef struct aauth_client_config {
+    const char* directory;
+    const aauth_client_options* options;
     aauth_device_platform platform;
     const aauth_mac_device* mac_device;
-    const char* serial_number; // NULL reuses saved serial; new identities omit it. Empty or "0"
-                               // means absent.
-} aauth_device_config;
+    const aauth_iphone_device* iphone_device;
+    const char* serial_number; // NULL reuses the saved serial; empty/"0" means absent.
+    const aauth_device_headers* headers;
+    const char* headers_json; // Optional JSON object of string header overrides.
+    const uint8_t* state;
+    size_t state_size;
+} aauth_client_config;
+
+typedef enum aauth_session_kind {
+    AAUTH_SESSION_ACCOUNT = 0,
+    AAUTH_SESSION_STORE = 1
+} aauth_session_kind;
 
 typedef enum aauth_verification_method {
     AAUTH_VERIFY_AUTOMATIC = 0,
@@ -125,59 +123,19 @@ typedef struct aauth_verification_options {
 // Handle/buffer outputs are assigned only on success; caller releases returned objects.
 APPLE_AUTH_CLIENT_EXPORT const char* aauth_client_version(void);
 APPLE_AUTH_CLIENT_EXPORT const char* aauth_client_last_error(void);
-APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_create(const char* directory,
-                                                          const aauth_client_options* options,
+// New identities use a random binding without collecting host hardware identifiers.
+// AUTOMATIC restores the saved platform, defaulting to Windows for new identities.
+APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_create(const aauth_client_config* config,
                                                           aauth_client** output);
-// New identities use a random binding and never collect host hardware identifiers.
-// AUTOMATIC reuses the saved platform, defaulting to Windows for new identities.
-// An explicit platform must match existing state.
-APPLE_AUTH_CLIENT_EXPORT aauth_status
-aauth_client_create_with_platform(const char* directory,
-                                  const aauth_client_options* options,
-                                  aauth_device_platform platform,
-                                  aauth_client** output);
-// Mac metadata is copied during creation. Other platforms require NULL/empty metadata.
-// Explicit values must agree with saved state.
-APPLE_AUTH_CLIENT_EXPORT aauth_status
-aauth_client_create_with_device(const char* directory,
-                                const aauth_client_options* options,
-                                aauth_device_platform platform,
-                                const aauth_mac_device* mac_device,
-                                aauth_client** output);
-// Metadata is copied during creation.
-APPLE_AUTH_CLIENT_EXPORT aauth_status
-aauth_client_create_configured(const char* directory,
-                               const aauth_client_options* options,
-                               const aauth_device_config* device,
-                               aauth_client** output);
-APPLE_AUTH_CLIENT_EXPORT aauth_status
-aauth_client_create_configured_v2(const char* directory,
-                                  const aauth_client_options_v2* options,
-                                  const aauth_device_config* device,
-                                  aauth_client** output);
-// Optional iPhone metadata and all configuration fields are copied during creation.
-APPLE_AUTH_CLIENT_EXPORT aauth_status
-aauth_client_create_configured_v3(const char* directory,
-                                  const aauth_client_options_v2* options,
-                                  const aauth_device_config* device,
-                                  const aauth_iphone_device* iphone,
-                                  aauth_client** output);
-APPLE_AUTH_CLIENT_EXPORT aauth_status
-aauth_client_create_configured_v4(const char* directory,
-                                  const aauth_client_options_v2* options,
-                                  const aauth_device_config* device,
-                                  const aauth_iphone_device* iphone,
-                                  const aauth_device_headers* headers,
-                                  aauth_client** output);
-// headers_json is an optional JSON object mapping header names to string values.
-APPLE_AUTH_CLIENT_EXPORT aauth_status
-aauth_client_create_configured_v5(const char* directory,
-                                  const aauth_client_options_v2* options,
-                                  const aauth_device_config* device,
-                                  const aauth_iphone_device* iphone,
-                                  const aauth_device_headers* headers,
-                                  const char* headers_json,
-                                  aauth_client** output);
+// Snapshot of identity, ADI, Store provisioning and saved session bytes. No HTTP.
+// Plaintext by default; optional encryption uses aauth_client_encrypt/decrypt_session.
+APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_state(const aauth_client* client,
+                                                         aauth_client_buffer* output);
+// Opaque session bytes (plain or encrypted); an empty output means no saved session.
+APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_session_data(const aauth_client* client,
+    aauth_session_kind kind, aauth_client_buffer* output);
+APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_set_session_data(aauth_client* client,
+    aauth_session_kind kind, const uint8_t* data, size_t size);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_device_platform(const aauth_client* client,
                                                                    aauth_device_platform* output);
 // UTF-8 JSON object with model/macos_version/macos_build, or null for another platform.
@@ -190,17 +148,11 @@ APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_device_info(const aauth_clien
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_provision(aauth_client* client);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_headers(aauth_client* client,
                                                            aauth_client_buffer* output);
-APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_login(aauth_client* client,
-                                                         const char* email,
-                                                         const char* password,
-                                                         aauth_two_factor_callback two_factor,
-                                                         void* context,
-                                                         aauth_account_session** output);
 APPLE_AUTH_CLIENT_EXPORT void aauth_account_session_free(aauth_account_session* session);
 APPLE_AUTH_CLIENT_EXPORT aauth_status
 aauth_account_session_from_plist(const uint8_t* data, size_t size, aauth_account_session** output);
 APPLE_AUTH_CLIENT_EXPORT aauth_status
-aauth_client_login_v2(aauth_client* client,
+aauth_client_login(aauth_client* client,
                       const char* email,
                       const char* password,
                       const aauth_verification_options* verification,
@@ -275,7 +227,7 @@ typedef struct aauth_appstore_mac_client aauth_appstore_mac_client;
 // builds without APPLE_AUTH_WITH_TESTFLIGHT return AAUTH_UNSUPPORTED.
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_features(aauth_client_buffer *output);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_store_client_create(
-    const char *directory, aauth_store_protocol protocol, const aauth_client_options_v2 *options,
+    const char *directory, aauth_store_protocol protocol, const aauth_client_options *options,
     const aauth_device_headers *headers, const char *headers_json, aauth_store_client **output);
 APPLE_AUTH_CLIENT_EXPORT void aauth_store_client_free(aauth_store_client *client);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_store_client_provision(aauth_store_client *client);
@@ -305,10 +257,10 @@ APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_store_session_testflight_context(
 // with headers (string map), deviceModel and deviceName. Returned query buffers contain
 // the original JSON/plist bytes; download results are JSON metadata, never archive bytes.
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_testflight_client_create(
-    const uint8_t *session_json, size_t size, const aauth_client_options_v2 *transport,
+    const uint8_t *session_json, size_t size, const aauth_client_options *transport,
     const char *options_json, aauth_testflight_client **output);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_testflight_client_from_store_cookies(
-    const uint8_t *context_json, size_t size, const aauth_client_options_v2 *transport,
+    const uint8_t *context_json, size_t size, const aauth_client_options *transport,
     const char *options_json, aauth_testflight_client **output);
 APPLE_AUTH_CLIENT_EXPORT void aauth_testflight_client_free(aauth_testflight_client *client);
 APPLE_AUTH_CLIENT_EXPORT aauth_status
@@ -323,7 +275,7 @@ APPLE_AUTH_CLIENT_EXPORT aauth_status
 aauth_testflight_client_download(aauth_testflight_client *client, const char *bundle,
                                  const char *path, aauth_client_buffer *output);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_appstore_ios_client_create(
-    const uint8_t *context_json, size_t size, const aauth_client_options_v2 *transport,
+    const uint8_t *context_json, size_t size, const aauth_client_options *transport,
     const char *headers_json, aauth_appstore_ios_client **output);
 APPLE_AUTH_CLIENT_EXPORT void aauth_appstore_ios_client_free(aauth_appstore_ios_client *client);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_appstore_ios_client_catalog(
@@ -339,7 +291,7 @@ aauth_appstore_ios_client_download(aauth_appstore_ios_client *client, uint64_t a
                                    const char *path, aauth_client_buffer *output);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_appstore_mac_client_create(
     const aauth_store_session *session, const char *store_directory, const char *country,
-    const aauth_client_options_v2 *options, const aauth_device_headers *headers,
+    const aauth_client_options *options, const aauth_device_headers *headers,
     const char *headers_json, aauth_appstore_mac_client **output);
 APPLE_AUTH_CLIENT_EXPORT void aauth_appstore_mac_client_free(aauth_appstore_mac_client *client);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_appstore_mac_client_catalog(

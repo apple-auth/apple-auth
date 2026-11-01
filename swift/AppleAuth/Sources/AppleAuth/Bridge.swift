@@ -29,7 +29,7 @@ internal final class NativeBridge: @unchecked Sendable {
     }
 }
 
-internal let transportCallback: aauth_transport_callback_v2 = { context, input, output in
+internal let transportCallback: aauth_transport_callback = { context, input, output in
     guard let context, let input, let output,
           let urlText = input.pointee.url, let method = input.pointee.method,
           let headerText = input.pointee.headers_json else { return -1 }

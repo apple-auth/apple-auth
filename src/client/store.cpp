@@ -1,5 +1,6 @@
 #include "client/data/store.hpp"
 #include "client/client_internal.hpp"
+#include "client/state_storage.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -418,7 +419,7 @@ void StoreSession::save_testflight_context(const Path& path,
 }
 
 struct StoreClient::Impl {
-    Path directory;
+    StateStorage storage;
     ClientOptions options;
     StoreProtocol protocol;
     Json identity, bag;
@@ -426,8 +427,8 @@ struct StoreClient::Impl {
     std::optional<Profile> profile;
     std::optional<SapSession> sap;
 
-    Impl(Path path, ClientOptions config, StoreProtocol selected)
-        : directory(std::move(path)), options(std::move(config)), protocol(selected) {
+    Impl(StateStorage state, ClientOptions config, StoreProtocol selected)
+        : storage(std::move(state)), options(std::move(config)), protocol(selected) {
         (void)protocol_name(protocol);
         options.transport = configured_transport(options);
         if (!options.clock) {
@@ -435,10 +436,10 @@ struct StoreClient::Impl {
                 return static_cast<std::int64_t>(std::time(nullptr));
             };
         }
-        if (std::filesystem::exists(directory / "identity.json")) {
-            identity = Json::parse(read_file(directory / "identity.json"));
+        if (storage.exists("identity.json")) {
+            identity = Json::parse(storage.read("identity.json"));
         } else {
-            require(!std::filesystem::exists(directory / "adi.pb"),
+            require(!storage.exists("adi.pb"),
                     "Store identity is missing beside its profile");
             auto guid = hex(random_bytes(6));
             std::transform(guid.begin(), guid.end(), guid.begin(), [](unsigned char c) {
@@ -453,7 +454,7 @@ struct StoreClient::Impl {
                         {"guid", guid},
                         {"device_id", identifier},
                         {"hardware_hash", hex(random_bytes(20))}};
-            write_private(directory / "identity.json", bytes(identity.dump(2)));
+            storage.write("identity.json", bytes(identity.dump(2)));
         }
         require(identity.value("version", 0) == 1 &&
                     identity.at("guid").get_ref<const std::string&>().size() == 12 &&
@@ -464,8 +465,8 @@ struct StoreClient::Impl {
         require(binding.size() == 20, "Invalid Store hardware binding");
         std::copy(binding.begin(), binding.end(), hardware.begin());
         if (protocol != StoreProtocol::configurator &&
-            std::filesystem::exists(directory / "adi.pb")) {
-            profile = Profile::import_file(read_file(directory / "adi.pb"), hardware, "adi.pb");
+            storage.exists("adi.pb")) {
+            profile = Profile::import_file(storage.read("adi.pb"), hardware, "adi.pb");
             require(profile->kind() == ProfileKind::store, "Wrong Store profile kind");
         }
     }
@@ -618,7 +619,7 @@ struct StoreClient::Impl {
         Block key{};
         std::copy(trust.begin(), trust.end(), key.begin());
         auto completed = pending.finish(binary(finished, "settingInfo"), key);
-        write_private(directory / "adi.pb", completed.export_file(hardware, "adi.pb"));
+        storage.write("adi.pb", completed.export_file(hardware, "adi.pb"));
         profile = std::move(completed);
     }
 
@@ -671,7 +672,10 @@ StoreClient::StoreClient(Path directory, ClientOptions options)
     : StoreClient(std::move(directory), StoreProtocol::android_music, std::move(options)) {}
 
 StoreClient::StoreClient(Path directory, StoreProtocol protocol, ClientOptions options)
-    : impl_(std::make_unique<Impl>(std::move(directory), std::move(options), protocol)) {}
+    : StoreClient(StateStorage(std::move(directory)), protocol, std::move(options)) {}
+
+StoreClient::StoreClient(StateStorage storage, StoreProtocol protocol, ClientOptions options)
+    : impl_(std::make_unique<Impl>(std::move(storage), std::move(options), protocol)) {}
 
 StoreClient::~StoreClient() = default;
 StoreClient::StoreClient(StoreClient&&) noexcept = default;

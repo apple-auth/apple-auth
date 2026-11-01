@@ -40,6 +40,10 @@ Passwords and trusted-device 2FA codes are prompted when needed. Device state an
 sessions are saved automatically; `Device.open("my-macbook")` reopens them.
 `AsyncDevice` provides the same workflow with `async with` and `await`.
 
+State can also stay in RAM: C++ `Client(options)`, Swift `Device()`, or Python
+`Device.memory()`. Export and restore snapshots as bytes, with optional encryption.
+[In-memory state and snapshot examples](docs/in-memory-state.md).
+
 Session encryption is optional: pass `encryption_key=key` to `Device` for encrypted
 automatic saves, or to session `save()` / `serialize()` methods. Swift uses
 `encryptionKey`. [Serialization and AES-256-GCM storage](docs/session-storage.md).

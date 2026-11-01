@@ -10,6 +10,7 @@
 #include <optional>
 
 namespace apple_auth {
+namespace netdetail { class StateStorage; }
 
 using Headers = std::map<std::string, std::string>;
 
@@ -129,6 +130,8 @@ enum class StoreProtocol {
     configurator
 };
 
+enum class SessionKind { account, store };
+
 class StoreSession {
   public:
     APPLE_AUTH_CLIENT_EXPORT static StoreSession from_plist(ByteView data);
@@ -194,16 +197,27 @@ class StoreClient {
     APPLE_AUTH_CLIENT_EXPORT HttpResponse request(StoreSession& session, HttpRequest request);
 
   private:
+    StoreClient(netdetail::StateStorage storage, StoreProtocol protocol, ClientOptions options);
+    friend class Client;
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
 
-// Persistent local identity, provisioning and GrandSlam trusted-device login.
-// Serialize calls on each Client instance. Separate instances need separate state directories.
+// Local identity, provisioning and GrandSlam login, in memory or in private files.
+// Serialize calls on each instance; independent file clients need separate directories.
 class Client {
   public:
+    // No directory or temporary files: identity and provisioning stay in RAM.
+    APPLE_AUTH_CLIENT_EXPORT explicit Client(ClientOptions options = {});
     APPLE_AUTH_CLIENT_EXPORT explicit Client(std::filesystem::path directory,
                                              ClientOptions options = {});
+    // Restore a snapshot into memory. Explicit encryption is optional.
+    APPLE_AUTH_CLIENT_EXPORT Client(ByteView state, ClientOptions options = {},
+                                    std::optional<ByteView> encryption_key = {});
+    APPLE_AUTH_CLIENT_EXPORT Bytes serialize_state(std::optional<ByteView> encryption_key = {}) const;
+    // Opaque serialized session bytes, used by higher-level automatic storage.
+    APPLE_AUTH_CLIENT_EXPORT Bytes session_data(SessionKind kind = SessionKind::account) const;
+    APPLE_AUTH_CLIENT_EXPORT void set_session_data(ByteView data, SessionKind kind = SessionKind::account);
     APPLE_AUTH_CLIENT_EXPORT ~Client();
     APPLE_AUTH_CLIENT_EXPORT Client(Client&&) noexcept;
     APPLE_AUTH_CLIENT_EXPORT Client& operator=(Client&&) noexcept;

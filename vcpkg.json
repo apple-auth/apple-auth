@@ -1,0 +1,43 @@
+{
+  "name": "apple-auth",
+  "version-semver": "0.1.0",
+  "builtin-baseline": "0c2a9ace1964b818b15f7ae50ba1c42404918a7b",
+  "dependencies": [
+    "mbedtls"
+  ],
+  "default-features": [
+    "client"
+  ],
+  "features": {
+    "testflight": {
+      "description": "TestFlight catalog and encrypted IPA downloads without Apple runtime components",
+      "dependencies": [
+        {"name":"libzip", "default-features":false},
+        "zlib"
+      ]
+    },
+    "client": {
+      "description": "Device provisioning, GrandSlam and Apple Music Store clients",
+      "dependencies": [
+        {
+          "name": "curl",
+          "default-features": false,
+          "features": [
+            "ssl"
+          ],
+          "platform": "windows & !uwp"
+        },
+        {
+          "name": "curl",
+          "default-features": false,
+          "features": [
+            "mbedtls"
+          ],
+          "platform": "!windows | uwp"
+        },
+        "libplist",
+        "nlohmann-json"
+      ]
+    }
+  }
+}

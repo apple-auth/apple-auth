@@ -1,0 +1,224 @@
+#pragma once
+
+#include <apple_auth/client_export.h>
+#include <apple_auth/core.hpp>
+
+#include <filesystem>
+#include <functional>
+#include <map>
+#include <optional>
+
+namespace apple_auth {
+
+using Headers = std::map<std::string, std::string>;
+
+struct HttpRequest {
+    std::string url;
+    std::string method = "POST";
+    Headers headers;
+    Bytes body;
+};
+
+struct HttpResponse {
+    long status = 0;
+    Bytes body;
+    // Preserve duplicates, particularly Set-Cookie.
+    std::vector<std::pair<std::string, std::string>> headers{};
+};
+
+using Transport = std::function<HttpResponse(const HttpRequest&)>;
+using TwoFactor = std::function<std::string()>;
+
+enum class VerificationMethod {
+    automatic,
+    trusted_device,
+    sms
+};
+
+struct TrustedPhoneNumber {
+    std::int64_t id;
+    std::string display_number;
+};
+
+struct VerificationOptions {
+    TwoFactor code;
+    VerificationMethod method = VerificationMethod::automatic;
+    std::int64_t phone_number_id = 0;
+    std::function<std::int64_t(const std::vector<TrustedPhoneNumber>&)> select_phone;
+};
+
+// Device identity platform, independent of the host OS.
+enum class DevicePlatform {
+    automatic = 0, // Reuse the saved platform; Windows for a new identity.
+    windows = 1,
+    mac = 2,
+    iphone = 3,
+    android = 4
+};
+
+struct MacDevice {
+    // Empty fields reuse saved values, or defaults for a new Mac identity.
+    std::string model;
+    std::string macos_version;
+    std::string macos_build;
+
+    bool operator==(const MacDevice&) const = default;
+};
+
+struct IPhoneDevice {
+    std::string model;
+    std::string ios_version;
+    std::string ios_build;
+
+    bool operator==(const IPhoneDevice&) const = default;
+};
+
+struct ClientOptions {
+    // Empty selects the bundled curl HTTPS transport.
+    Transport transport;
+    std::function<std::int64_t()> clock;
+    DevicePlatform device_platform = DevicePlatform::automatic;
+    MacDevice mac_device{};
+    // Unset reuses the saved serial; omitted for new identities. Empty or "0" means absent.
+    std::optional<std::string> serial_number{};
+    IPhoneDevice iphone_device{};
+    // Optional SAP entropy source; empty uses the SDK CSPRNG.
+    std::function<SapEntropy()> sap_entropy;
+    // Per-client header overrides; empty values use the platform defaults.
+    std::string user_agent;
+    std::string client_info;
+    // Applied after protocol defaults, including user_agent and client_info.
+    Headers headers;
+};
+
+struct AccountSession {
+    std::string account_id;
+    std::string pet;
+    Bytes plist;
+
+    APPLE_AUTH_CLIENT_EXPORT static AccountSession from_plist(ByteView data);
+    APPLE_AUTH_CLIENT_EXPORT static AccountSession load(const std::filesystem::path& file);
+    APPLE_AUTH_CLIENT_EXPORT void save(const std::filesystem::path& file) const;
+};
+
+struct DeveloperSession {
+    // Opaque GrandSlam ADSID, preserved as returned by Apple (not necessarily numeric).
+    std::string account_id;
+    std::string token;
+    std::int64_t expires_at_ms = 0;
+};
+
+enum class StoreProtocol {
+    android_music,
+    macos_accounts,
+    configurator
+};
+
+class StoreSession {
+  public:
+    APPLE_AUTH_CLIENT_EXPORT static StoreSession from_plist(ByteView data);
+    APPLE_AUTH_CLIENT_EXPORT static StoreSession load(const std::filesystem::path& file);
+    APPLE_AUTH_CLIENT_EXPORT ~StoreSession();
+    APPLE_AUTH_CLIENT_EXPORT StoreSession(StoreSession&&) noexcept;
+    APPLE_AUTH_CLIENT_EXPORT StoreSession& operator=(StoreSession&&) noexcept;
+    StoreSession(const StoreSession&) = delete;
+    StoreSession& operator=(const StoreSession&) = delete;
+    APPLE_AUTH_CLIENT_EXPORT std::string account_id() const;
+    APPLE_AUTH_CLIENT_EXPORT std::string storefront() const;
+    APPLE_AUTH_CLIENT_EXPORT StoreProtocol protocol() const;
+    APPLE_AUTH_CLIENT_EXPORT Headers headers(const std::string& url) const;
+    APPLE_AUTH_CLIENT_EXPORT Bytes plist() const;
+    APPLE_AUTH_CLIENT_EXPORT void save(const std::filesystem::path& file) const;
+    // JSON contexts for AppStoreIosClient and TestFlightClient.
+    APPLE_AUTH_CLIENT_EXPORT Bytes ios_context(const std::string& country) const;
+    APPLE_AUTH_CLIENT_EXPORT Bytes testflight_context(ByteView hardware20,
+                                                      Headers device_headers) const;
+    APPLE_AUTH_CLIENT_EXPORT void save_ios_context(const std::filesystem::path& file,
+                                                   const std::string& country) const;
+    APPLE_AUTH_CLIENT_EXPORT void save_testflight_context(const std::filesystem::path& file,
+                                                          ByteView hardware20,
+                                                          Headers device_headers) const;
+
+  private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+    explicit StoreSession(std::unique_ptr<Impl> impl);
+    friend class StoreClient;
+};
+
+// The default protocol is Android Music.
+class StoreClient {
+  public:
+    APPLE_AUTH_CLIENT_EXPORT explicit StoreClient(std::filesystem::path directory,
+                                                  ClientOptions options = {});
+    APPLE_AUTH_CLIENT_EXPORT StoreClient(std::filesystem::path directory,
+                                         StoreProtocol protocol,
+                                         ClientOptions options = {});
+    APPLE_AUTH_CLIENT_EXPORT ~StoreClient();
+    APPLE_AUTH_CLIENT_EXPORT StoreClient(StoreClient&&) noexcept;
+    APPLE_AUTH_CLIENT_EXPORT StoreClient& operator=(StoreClient&&) noexcept;
+    StoreClient(const StoreClient&) = delete;
+    StoreClient& operator=(const StoreClient&) = delete;
+    APPLE_AUTH_CLIENT_EXPORT void provision();
+    APPLE_AUTH_CLIENT_EXPORT Headers headers();
+    APPLE_AUTH_CLIENT_EXPORT StoreSession login(const std::string& email,
+                                                const std::string& password,
+                                                const TwoFactor& two_factor);
+    // macOS Accounts only. Does not obtain or refresh PET. Callback supplies
+    // fresh Mac GrandSlam device headers; Store anisette remains separate.
+    APPLE_AUTH_CLIENT_EXPORT StoreSession
+    login_with_pet(const std::string& email,
+                   const AccountSession& account,
+                   const std::function<Headers()>& device_headers);
+    // Adds fresh anisette, session authentication and SAP; updates session cookies.
+    APPLE_AUTH_CLIENT_EXPORT HttpResponse request(StoreSession& session, HttpRequest request);
+
+  private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+// Persistent local identity, provisioning and GrandSlam trusted-device login.
+// Serialize calls on each Client instance. Separate instances need separate state directories.
+class Client {
+  public:
+    APPLE_AUTH_CLIENT_EXPORT explicit Client(std::filesystem::path directory,
+                                             ClientOptions options = {});
+    APPLE_AUTH_CLIENT_EXPORT ~Client();
+    APPLE_AUTH_CLIENT_EXPORT Client(Client&&) noexcept;
+    APPLE_AUTH_CLIENT_EXPORT Client& operator=(Client&&) noexcept;
+    Client(const Client&) = delete;
+    Client& operator=(const Client&) = delete;
+
+    APPLE_AUTH_CLIENT_EXPORT void provision();
+    APPLE_AUTH_CLIENT_EXPORT Headers headers();
+    APPLE_AUTH_CLIENT_EXPORT DevicePlatform device_platform() const noexcept;
+    // Resolved metadata; empty fields for another platform. No HTTP.
+    APPLE_AUTH_CLIENT_EXPORT MacDevice mac_device() const;
+    APPLE_AUTH_CLIENT_EXPORT IPhoneDevice iphone_device() const;
+    APPLE_AUTH_CLIENT_EXPORT std::string serial_number() const;
+    APPLE_AUTH_CLIENT_EXPORT AccountSession login(const std::string& email,
+                                                  const std::string& password,
+                                                  const TwoFactor& two_factor);
+    APPLE_AUTH_CLIENT_EXPORT AccountSession
+    login_with_options(const std::string& email,
+                       const std::string& password,
+                       const VerificationOptions& verification);
+    APPLE_AUTH_CLIENT_EXPORT DeveloperSession developer_session(const AccountSession& account);
+    APPLE_AUTH_CLIENT_EXPORT Headers developer_headers(const DeveloperSession& session);
+    APPLE_AUTH_CLIENT_EXPORT void provision_store();
+    APPLE_AUTH_CLIENT_EXPORT Headers store_headers();
+    APPLE_AUTH_CLIENT_EXPORT StoreSession login_store(const std::string& email,
+                                                      const std::string& password,
+                                                      const TwoFactor& two_factor);
+    // Requires a Mac Client and an existing Mac GSA/PET session.
+    APPLE_AUTH_CLIENT_EXPORT StoreSession login_store_with_pet(const std::string& email,
+                                                               const AccountSession& account);
+    APPLE_AUTH_CLIENT_EXPORT HttpResponse store_request(StoreSession& session, HttpRequest request);
+
+  private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+} // namespace apple_auth

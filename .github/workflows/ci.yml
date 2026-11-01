@@ -1,0 +1,99 @@
+name: build
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        shared: ["ON", "OFF"]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build libmbedtls-dev libcurl4-gnutls-dev libplist-dev nlohmann-json3-dev
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=${{ matrix.shared }}
+      - run: cmake --build build --parallel 4
+      - run: python -m pip wheel . --no-deps --wheel-dir dist
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned vcpkg baseline
+        shell: pwsh
+        run: |
+          $baseline = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch origin $baseline --depth=1
+      - shell: pwsh
+        run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+      - run: cmake --build build --config Release --parallel 4
+      - run: python -m pip wheel . --no-deps --wheel-dir dist
+  macos:
+    name: macOS (${{ matrix.runner }}, shared=${{ matrix.shared }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+        shared: ["ON", "OFF"]
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Dependencies
+        run: brew install cmake ninja pkgconf mbedtls@3 curl nlohmann-json
+      - name: Configure
+        run: >-
+          cmake --preset release
+          -DBUILD_SHARED_LIBS=${{ matrix.shared }}
+          -DCMAKE_PREFIX_PATH="$(brew --prefix mbedtls@3);$(brew --prefix curl)"
+      - run: cmake --build --preset release --parallel 3
+      - name: Stage install
+        run: cmake --install build/release --prefix "$PWD/build/relocated"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apple-auth-${{ matrix.runner }}-shared-${{ matrix.shared }}
+          path: build/relocated/
+          retention-days: 7
+  ios:
+    name: iOS / iPadOS XCFramework
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: brew install cmake ninja
+      - run: python tools/build_apple.py --with-client --include-macos
+      - run: swift build --package-path build/apple/package/AppleAuth
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apple-auth-ios-xcframework
+          path: build/apple/package/
+          retention-days: 7
+  core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build libmbedtls-dev
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DAPPLE_AUTH_WITH_CLIENT=OFF
+      - run: cmake --build build

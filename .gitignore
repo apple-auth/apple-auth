@@ -1,0 +1,15 @@
+/build/
+/install/
+/.local/
+/CMakeUserPresets.json
+/.cache/
+/.vs/
+__pycache__/
+*.user
+
+/dist/
+*.egg-info/
+*.pyc
+/swift/AppleAuth/Artifacts/
+.build/
+.swiftpm/

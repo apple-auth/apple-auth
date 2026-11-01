@@ -1,0 +1,59 @@
+name: Apple SDK release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  apple:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: brew install cmake ninja
+      - run: python tools/build_apple.py --with-client --include-macos
+      - run: swift build --package-path build/apple/package/AppleAuth
+      - name: Package checksums and release notes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          package = Path("build/apple/package")
+          names = ["AppleAuth.zip", "apple_auth.xcframework.zip"]
+          checksums = "".join(f"{hashlib.sha256((package / name).read_bytes()).hexdigest()}  {name}\n" for name in names)
+          (package / "SHA256SUMS").write_text(checksums, encoding="utf-8")
+          Path("build/release-notes.md").write_text(
+              "Prebuilt AppleAuth SDK for iOS 13+ and macOS 12+.\n\n"
+              "Download `AppleAuth.zip`, extract it, and add the enclosed directory as a local Swift package in Xcode. "
+              "It includes provisioning, anisette, GrandSlam login, trusted-device/SMS verification, "
+              "and Developer Session exchange through URLSession. No local CMake or dependency installation is needed.\n\n"
+              "`apple_auth.xcframework.zip` contains the native C/C++ library. "
+              "Device arm64, simulator arm64/x86_64, and macOS arm64/x86_64 slices are included.\n",
+              encoding="utf-8")
+          PY
+      - name: Publish release
+        run: >-
+          gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG"
+          --notes-file build/release-notes.md
+          build/apple/package/AppleAuth.zip
+          build/apple/package/apple_auth.xcframework.zip
+          build/apple/package/SHA256SUMS

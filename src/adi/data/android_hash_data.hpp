@@ -1,0 +1,37 @@
+#pragma once
+
+#include "data_mask.hpp"
+#include <array>
+#include <cstdint>
+
+namespace apple_auth::detail::android_hash_data {
+
+inline const auto initial_state = data_mask::decode(
+    std::array<std::uint32_t, 8>{
+        0x31780322U,
+        0x519DD77DU,
+        0xFCFD6754U,
+        0xB1441623U,
+        0x4D85128FU,
+        0x0D594A2FU,
+        0xE2A74873U,
+        0x27708777U,
+    },
+    0x9615F3B7U);
+
+inline const auto round_constants = data_mask::decode(
+    std::array<std::uint32_t, 64>{
+        0xB1EE57ECU, 0x80A9D661U, 0x7F8A0875U, 0xD2BB6CDEU, 0x5917659CU, 0x8550B697U, 0xADB4EDB3U,
+        0xC6ACE89CU, 0x5349E2B2U, 0x77B55FECU, 0x66BFDDB4U, 0x35B4318AU, 0xB894D73FU, 0xEB66E31CU,
+        0x04DEB2CFU, 0x7A4775C2U, 0x5FCC66C2U, 0xB24640F7U, 0x2FAD5639U, 0xB115A3E8U, 0xBB5409E6U,
+        0x530DC1DFU, 0xD2234A2AU, 0xA9E321E3U, 0x4EE5B40CU, 0xB955F7D0U, 0x67B363A5U, 0x9BC5DBC5U,
+        0x9559DD05U, 0xFD5D748CU, 0xDE168D8DU, 0x5FE51C14U, 0x5E19CE58U, 0xD7F72017U, 0xD8C56324U,
+        0x40B10C77U, 0x75A7C87BU, 0x7AB1E489U, 0xD551DCB2U, 0xB6DE5BEFU, 0xF12A5534U, 0x4287138BU,
+        0x7C33789BU, 0xDA25D3EDU, 0x19947E41U, 0xBC6C29CEU, 0x7E9B2F4EU, 0x5A9BC302U, 0x77C675B5U,
+        0x4F87F90DU, 0xA579F643U, 0x2C3D905CU, 0xD99815CFU, 0xDED6E395U, 0xC3940D4DU, 0x36912271U,
+        0x09EC4B5DU, 0x4BA96B85U, 0x6992E252U, 0xA95BEC13U, 0xB827B2C5U, 0x238C570CU, 0x2619D0C3U,
+        0x1228C7C1U,
+    },
+    0x3A7EC149U);
+
+} // namespace apple_auth::detail::android_hash_data

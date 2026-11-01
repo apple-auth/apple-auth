@@ -1760,8 +1760,7 @@ certificate trust. No workflow supplies a FairPlay credential or content decrypt
 | [Usage and build](usage.md) | Language setup, device presets, header overrides and Apple packaging |
 | [Store authentication](store.md) | Mac PET/Configurator C++ snippets and authentication details |
 | [TestFlight](testflight.md) | TF downloads, archive processing and configuration |
-| [iOS App Store](appstore.md) | iOS context, license and IPA behavior |
-| [macOS App Store](appstore-macos.md) | Original assets, dpInfo3 packages and validation limits |
+| [App Store](appstore.md) | iOS context, license and IPA behavior; macOS assets, dpInfo3 packages and validation limits |
 | [State and protocol formats](formats.md) | File schemas, ADI/OTP and signature structures |
 | [Source layout](source-layout.md) | Implementation modules and fixed-data conventions |
 | [Examples](../examples/) | Runnable language and CLI source examples |

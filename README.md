@@ -96,7 +96,7 @@ It uses the SDK's MbedTLS/curl stack; Windows HTTPS uses Schannel.
 The same option adds `AppStoreIosClient` and `apple-auth-appstore` for the ordinary
 iOS App Store: Mac SAP1 → Configurator authentication with password/2FA → iOS Store
 cookies → public catalog and encrypted IPA download, with explicit zero-price
-license acquisition. [Commands and session requirements](docs/appstore.md).
+license acquisition. [Commands and session requirements](docs/appstore.md#ios-app-store).
 
 Downloaded iOS App Store and TestFlight IPAs can be decrypted with
 [fairplay-decrypt](https://github.com/EthanArbuckle/fairplay-decrypt).
@@ -105,7 +105,7 @@ Use a `credential.bin` from the **same Apple ID used to download the IPA**.
 
 `AppStoreMacClient` and `apple-auth-appstore --mac` download macOS Store assets
 and remove dpInfo3 to produce checked `.pkg` files using saved Mac sessions.
-[Mac package commands and validation limits](docs/appstore-macos.md).
+[Mac package commands and validation limits](docs/appstore.md#macos-app-store).
 
 Store protocols and download clients are exposed in C++, C, Python and Swift.
 Use `StoreClient` for explicit Android Music/Configurator protocols and
@@ -129,6 +129,6 @@ Use `apple_auth::core` for ADI/SAP without HTTP. C headers:
 
 [Complete integration guide](docs/full-docs.md) · [Usage & build guide](docs/usage.md) ·
 [Store authentication](docs/store.md) · [TestFlight](docs/testflight.md) ·
-[iOS App Store](docs/appstore.md) · [macOS App Store](docs/appstore-macos.md) ·
+[App Store](docs/appstore.md) ·
 [State & protocol formats](docs/formats.md) · [Examples](examples/) ·
 [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)

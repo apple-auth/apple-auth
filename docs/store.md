@@ -149,7 +149,7 @@ Both download paths preserve FairPlay content encryption. The SDK does not
 include iOS SAP, credential extraction or content decryption.
 
 macOS Store delivery assets can also be fetched from the Mac session, using
-`apple-auth-appstore --mac`. [Mac commands and output format](appstore-macos.md).
+`apple-auth-appstore --mac`. [Mac commands and output format](appstore.md#macos-app-store).
 The `download` command preserves the original asset and any transport wrapping;
 `package` removes dpInfo3 and validates the resulting XAR `.pkg`. Installer
 certificate trust and installation/launch on a Mac are not verified by the SDK.

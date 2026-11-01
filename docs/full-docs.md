@@ -840,6 +840,10 @@ envelopes, account plist fields and SAP signature framing.
 Python factories, `Device.open()` and `AsyncDevice` accept `user_agent`,
 `client_info` and `headers`. Swift uses `userAgent`, `clientInfo`, `headers`;
 C++ uses `ClientOptions` and C provides `aauth_client_create()`.
+The `user_agent`/`client_info` shortcuts customize the device profile. Protocol
+profiles can replace them: Xcode requests retain `User-Agent: Xcode`, and Store
+ADI control requests retain their akd/Mac headers. The transport does not reapply
+the shortcuts after protocol headers have been selected.
 Explicit dictionary headers take priority over the shortcuts and protocol
 defaults. Header names are case-insensitive; duplicate names with different
 casing are rejected. Values must be printable ASCII, at most 4096 bytes each,
@@ -852,7 +856,7 @@ settings. Pass them again when reopening. Empty shortcut strings retain defaults
 | --- | --- |
 | `TestFlightClient` constructors and factories | Final `TestFlightOptions`: `headers`, `device_model`, `device_name` |
 | `AppStoreIosClient` constructors | Final `Headers` argument after transport |
-| `AppStoreMacClient` | `ClientOptions::headers`, `user_agent`, `client_info` |
+| `AppStoreMacClient` | `ClientOptions::headers` globally; `user_agent`/`client_info` for its Store device profile |
 
 TF uses model/name and headers present in saved session JSON when no override
 is supplied. Runtime header overrides are per instance; pass them again when
@@ -910,7 +914,7 @@ synthetic IDs and mock responses do not authenticate an account.
 | `os_version` | `None` | Generic constructor name; factory aliases are `macos="14.4.1"` and `ios="17.4.1"`. |
 | `os_build` | `None` | Generic constructor name; factory alias is `build="23E224"` (Mac) or `"21E236"` (iPhone). Supply a matching build when selecting a different OS version. |
 | `serial_number` | `None` | Optional explicit serial, e.g. `"DEMO-MAC-001"`; up to 32 ASCII letters/digits/hyphens. New devices omit it by default. |
-| `user_agent` | `None` | `"MyClient/1.0"`; sets `User-Agent` unless replaced in `headers`. |
+| `user_agent` | `None` | `"MyClient/1.0"`; sets the device-profile `User-Agent`. Protocol-specific profiles can replace it; `headers` takes final priority. |
 | `client_info` | `None` | Device description for `X-MMe-Client-Info`; omit to use the preset. |
 | `headers` | `None` | String dictionary such as `{"Accept-Language": "pl-PL"}`; restrictions and precedence are described above. |
 | `library` | `None` | A shared `Library` instance or native library path for client constructors. `None` creates a library using discovery. Session `load`/`from_plist` accept a `Library` instance. |
@@ -1261,7 +1265,7 @@ disables the optional expected-bundle match while retaining archive checks.
 | `iOSVersion`, `iOSBuild` | `nil` | `"17.4.1"`, `"21E236"` with `.iphone`; leave `nil` for other presets. |
 | `serialNumber` | `nil` | Optional explicit serial, e.g. `"DEMO-MAC-001"`; same limits as Python. |
 | `transport` | `nil` | Async `HTTPTransport`; default private URLSession. |
-| `userAgent`, `clientInfo` | `nil` | Header shortcuts; empty strings use defaults. |
+| `userAgent`, `clientInfo` | `nil` | Device-profile header shortcuts; empty strings use defaults. Protocol-specific headers can replace them; `headers` takes final priority. |
 | `headers` | `[:]` | String dictionary applied after shortcuts/defaults. |
 | `encryptionKey` | `nil` | Optional 32-byte `Data` storage key for automatic account saves/loads; also accepted by `Device.open`. |
 | `clock` | `{ Date() }` | `@Sendable () -> Date`; no Unix conversion in the Swift API. |
@@ -1432,8 +1436,8 @@ profile. Defaults and all configurable fields:
 | `iphone_device` | Empty fields | `IPhoneDevice{model, ios_version, ios_build}`; use only with the iPhone preset. |
 | `serial_number` | `std::nullopt` | Reuse saved serial; new identities omit it. Explicit empty/`"0"` means absent. |
 | `sap_entropy` | Empty | SDK CSPRNG; optional callable returning `SapEntropy` for offline comparisons. This callback is a C++ option, not a Python/Swift constructor argument. |
-| `user_agent`, `client_info` | Empty | Platform defaults; shortcuts for User-Agent and Client-Info. |
-| `headers` | Empty map | Explicit string header overrides. |
+| `user_agent`, `client_info` | Empty | Device-profile shortcuts for User-Agent and Client-Info; protocol-specific profiles can replace them. |
+| `headers` | Empty map | Explicit global string header overrides, applied after device and protocol defaults. |
 
 ```cpp
 #include <apple_auth/client.hpp>
@@ -1559,7 +1563,7 @@ status before reading outputs; the snippets below show argument layouts.
 | `aauth_mac_device` | `model`, `macos_version`, `macos_build`; optional UTF-8 strings. |
 | `aauth_iphone_device` | `model`, `ios_version`, `ios_build`; optional UTF-8 strings. |
 | `aauth_client_config` | Zero-initialize; `directory`, `options`, `platform`, `mac_device`, `iphone_device`, `serial_number`, `headers`, `headers_json`, `state`, `state_size`. See below. |
-| `aauth_device_headers` | `user_agent`, `client_info`; `NULL`/empty preserves defaults. |
+| `aauth_device_headers` | Device-profile `user_agent`, `client_info`; `NULL`/empty preserves defaults. Protocol-specific requests may replace them; use `headers_json` for global overrides. |
 | `headers_json` | Optional JSON object of strings, e.g. `{"Accept-Language":"pl-PL"}`. |
 | `aauth_verification_options` | `method`, `phone_number_id`, `code`, `select_phone`, `context`; the verification context is independent of transport context. |
 | `aauth_http_request` | `url`, `method`, `headers_json`, `body`, `body_size`; body size is in bytes. |

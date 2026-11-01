@@ -663,7 +663,7 @@ Headers Client::developer_headers(const DeveloperSession& session) {
     result["X-Apple-GS-Token"] = session.token;
     result["X-Apple-I-Identity-Id"] = session.account_id;
     netdetail::apply_xcode_headers(result);
-    netdetail::apply_device_headers(result, impl_->options);
+    netdetail::merge_headers(result, impl_->options.headers);
     return result;
 }
 } // namespace apple_auth

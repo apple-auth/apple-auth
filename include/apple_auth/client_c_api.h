@@ -75,6 +75,8 @@ typedef struct aauth_iphone_device {
 } aauth_iphone_device;
 
 typedef struct aauth_device_headers {
+    // Device-profile shortcuts. Protocol-specific requests may replace these.
+    // Use headers_json for explicit global overrides after protocol defaults.
     const char* user_agent;
     const char* client_info;
 } aauth_device_headers;

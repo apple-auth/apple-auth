@@ -97,13 +97,13 @@ void apply_device_headers(Headers& headers, const ClientOptions& options) {
 Transport configured_transport(const ClientOptions& options) {
     validate_device_headers(options);
     auto transport = options.transport ? options.transport : make_curl_transport();
-    Headers overrides;
-    apply_device_headers(overrides, options);
-    if (overrides.empty()) {
+    // Device shortcuts are applied by profile builders. Only explicit global
+    // overrides may replace the headers selected for a protocol-specific request.
+    if (options.headers.empty()) {
         return transport;
     }
     return [transport = std::move(transport),
-            overrides = std::move(overrides)](const HttpRequest& request) {
+            overrides = options.headers](const HttpRequest& request) {
         auto configured = request;
         merge_headers(configured.headers, overrides);
         return transport(configured);

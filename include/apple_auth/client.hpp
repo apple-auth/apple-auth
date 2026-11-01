@@ -88,10 +88,11 @@ struct ClientOptions {
     IPhoneDevice iphone_device{};
     // Optional SAP entropy source; empty uses the SDK CSPRNG.
     std::function<SapEntropy()> sap_entropy;
-    // Per-client header overrides; empty values use the platform defaults.
+    // Device-profile shortcuts; empty values use the platform defaults.
+    // Protocol-specific requests may replace them (e.g. User-Agent: Xcode).
     std::string user_agent;
     std::string client_info;
-    // Applied after protocol defaults, including user_agent and client_info.
+    // Explicit global overrides, applied after device and protocol defaults.
     Headers headers;
 };
 

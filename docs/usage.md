@@ -142,8 +142,11 @@ with Device.mac("my-mac", macos="27.2", build="26B123") as device:
 
 Every device factory accepts `user_agent`, `client_info` and a `headers` dictionary.
 This includes Mac, iPhone, Windows, Android, `Device.open()` and `AsyncDevice`.
-`user_agent` sets `User-Agent`; `client_info` sets `X-MMe-Client-Info`.
-Empty shortcut values keep the defaults. `headers` can replace these fields and
+`user_agent` sets the device-profile `User-Agent`; `client_info` sets its
+`X-MMe-Client-Info`. Empty shortcut values keep the defaults. Protocol-specific
+requests retain their own profile: Xcode uses `User-Agent: Xcode`, and Store
+ADI control requests keep their akd/Mac headers. The shortcuts do not overwrite
+these at the transport layer. `headers` can replace these fields and
 set other device headers, including locale, time zone, language and app info.
 Names are matched without regard to case; duplicate names with different casing
 are rejected. Explicit dictionary values take priority over the shortcuts and

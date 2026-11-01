@@ -25,8 +25,10 @@ std::int64_t http_date(const std::string& value) {
     return -1;
 }
 
-HttpResponse curl_transport(const HttpRequest&) {
-    throw apple_auth::Error(ErrorCode::unsupported,
-                            "This build requires a custom HTTP transport; use the Swift AppleAuth package on Apple platforms");
+Transport make_curl_transport() {
+    return [](const HttpRequest&) -> HttpResponse {
+        throw apple_auth::Error(ErrorCode::unsupported,
+                                "This build requires a custom HTTP transport; use the Swift AppleAuth package on Apple platforms");
+    };
 }
 } // namespace apple_auth::netdetail

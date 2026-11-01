@@ -106,10 +106,8 @@ bool trusted_device_code_already_sent(const Json& response, const Json& session)
 
 Headers trusted_device_headers(Headers headers, const std::string& identity_token) {
     headers["X-Apple-Identity-Token"] = identity_token;
-    headers["User-Agent"] = "Xcode";
+    apply_xcode_headers(headers);
     headers["Accept"] = "text/x-xml-plist";
-    headers["X-Apple-App-Info"] = "com.apple.gs.xcode.auth";
-    headers["X-Xcode-Version"] = "11.2 (11B41)";
     return headers;
 }
 
@@ -403,6 +401,7 @@ DeveloperSession exchange_developer_session(const AccountSession& account,
     const auto challenge = binary(session, "c");
     require(!challenge.empty() && challenge.size() <= 4096, "Invalid application-token challenge");
     auto headers = authentication_headers(fresh_headers, clock());
+    apply_xcode_headers(headers);
     const auto checksum =
         hmac_sha256(key, bytes(std::string("apptokens") + account.account_id + application));
     const Json fields = {{"o", "apptokens"},

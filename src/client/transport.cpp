@@ -4,6 +4,7 @@
 #include <curl/curl.h>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -89,7 +90,7 @@ void append_certificate(std::string& bundle, ByteView der) {
     bundle += "-----END CERTIFICATE-----\n";
 }
 
-std::string trust_bundle(CURL* handle) {
+std::string build_trust_bundle(CURL* handle) {
     std::string bundle;
     append_certificate(bundle, unhex(apple_root_hex));
     append_certificate(bundle, unhex(apple_root_g3_hex));
@@ -125,9 +126,22 @@ std::string trust_bundle(CURL* handle) {
     return bundle;
 }
 
-} // namespace
+const std::string& trust_bundle(CURL* handle) {
+    // OS roots and the default CA file are snapshotted once per process.
+    // Function-local static initialization also serializes concurrent first use.
+    static const std::string bundle = build_trust_bundle(handle);
+    return bundle;
+}
 
-HttpResponse curl_transport(const HttpRequest& request) {
+struct CurlTransport {
+    std::mutex mutex;
+    std::optional<CertificateFile> certificate_file;
+    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> handle{nullptr, curl_easy_cleanup};
+
+    HttpResponse perform(const HttpRequest& request);
+};
+
+HttpResponse CurlTransport::perform(const HttpRequest& request) {
     const auto& url = request.url;
     const auto& body = request.body;
     const auto& headers = request.headers;
@@ -138,9 +152,21 @@ HttpResponse curl_transport(const HttpRequest& request) {
         return 1;
     }();
     (void)initialized;
+    // Copies of the Transport share a handle, but never perform on it concurrently.
+    const std::lock_guard lock(mutex);
+    if (!handle) {
+        handle.reset(curl_easy_init());
+        require(bool(handle), "Cannot create HTTP transport");
+    }
+    struct ResetOptions {
+        CURL* handle;
+        ~ResetOptions() {
+            // Drop request pointers, headers and bodies on success and exceptions.
+            // curl retains live connections, DNS and TLS session caches.
+            curl_easy_reset(handle);
+        }
+    } reset{handle.get()};
     std::array<char, CURL_ERROR_SIZE> error_buffer{};
-    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> handle(curl_easy_init(), curl_easy_cleanup);
-    require(bool(handle), "Cannot create HTTP request");
     std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> list(nullptr, curl_slist_free_all);
     for (const auto& [k, v] : headers) {
         require(k.find_first_of("\r\n:") == std::string::npos &&
@@ -158,22 +184,29 @@ HttpResponse curl_transport(const HttpRequest& request) {
     curl_easy_setopt(handle.get(), CURLOPT_CUSTOMREQUEST, method.c_str());
     curl_easy_setopt(handle.get(), CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(handle.get(), CURLOPT_TIMEOUT, 90L);
+    curl_easy_setopt(handle.get(), CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(handle.get(), CURLOPT_PROTOCOLS_STR, "https");
     curl_easy_setopt(handle.get(), CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(handle.get(), CURLOPT_ACCEPT_ENCODING, "");
     curl_easy_setopt(handle.get(), CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(handle.get(), CURLOPT_SSL_VERIFYHOST, 2L);
-    auto certificates = trust_bundle(handle.get());
-    curl_blob bundle{certificates.data(), certificates.size(), CURL_BLOB_NOCOPY};
-    std::optional<CertificateFile> certificate_file;
+    const auto& certificates = trust_bundle(handle.get());
+    curl_blob bundle{const_cast<char*>(certificates.data()), certificates.size(), CURL_BLOB_NOCOPY};
     const auto certificate_status = curl_easy_setopt(handle.get(), CURLOPT_CAINFO_BLOB, &bundle);
     if (certificate_status == CURLE_NOT_BUILT_IN || certificate_status == CURLE_UNKNOWN_OPTION) {
         // Older GnuTLS-backed curl releases support CAINFO but not CAINFO_BLOB.
-        // Keep this private file alive through the request, including error paths.
-        certificate_file.emplace();
-        certificate_file->path = std::filesystem::temp_directory_path() /
-                                 ("apple-auth-ca-" + hex(random_bytes(16)) + ".pem");
-        write_private(certificate_file->path, bytes(certificates));
+        // Reuse a private file for this transport's lifetime, including error paths.
+        if (!certificate_file) {
+            certificate_file.emplace();
+            certificate_file->path = std::filesystem::temp_directory_path() /
+                                     ("apple-auth-ca-" + hex(random_bytes(16)) + ".pem");
+            try {
+                write_private(certificate_file->path, bytes(certificates));
+            } catch (...) {
+                certificate_file.reset();
+                throw;
+            }
+        }
         const auto path = certificate_file->path.u8string();
         require(curl_easy_setopt(handle.get(),
                                  CURLOPT_CAINFO,
@@ -256,5 +289,14 @@ HttpResponse curl_transport(const HttpRequest& request) {
     }
     curl_easy_getinfo(handle.get(), CURLINFO_RESPONSE_CODE, &response.status);
     return response;
+}
+
+} // namespace
+
+Transport make_curl_transport() {
+    auto state = std::make_shared<CurlTransport>();
+    return [state = std::move(state)](const HttpRequest& request) {
+        return state->perform(request);
+    };
 }
 } // namespace apple_auth::netdetail

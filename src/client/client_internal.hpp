@@ -21,6 +21,7 @@ void validate_device_headers(const ClientOptions& options);
 void apply_device_headers(Headers& headers, const ClientOptions& options);
 void merge_headers(Headers& headers, const Headers& overrides);
 Transport configured_transport(const ClientOptions& options);
+void apply_xcode_headers(Headers& headers);
 Bytes bytes(const std::string& value);
 std::string str(View value);
 Bytes read_file(const Path& path, std::size_t limit = 64 * 1024);
@@ -36,7 +37,7 @@ Bytes aes_cbc(View input, View key, View iv, bool decrypt, bool padding = false)
 Bytes password_key(const std::string& password, View salt, int iterations, bool hex_password);
 Json parse_plist(View input);
 Bytes encode_plist(const Json& value);
-HttpResponse curl_transport(const HttpRequest& request);
+Transport make_curl_transport();
 std::int64_t http_date(const std::string& value);
 void check_apple_endpoint(const std::string& url);
 Json lookup_grandslam_urls(const Headers& headers, const Transport& transport);

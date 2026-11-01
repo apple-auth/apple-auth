@@ -122,7 +122,8 @@ ClientOptions client_options(const aauth_client_options* supplied) {
             return options.clock(options.context);
         };
     }
-    result.transport = [options](const HttpRequest& request) {
+    auto fallback = options.transport ? Transport{} : netdetail::make_curl_transport();
+    result.transport = [options, fallback = std::move(fallback)](const HttpRequest& request) {
         const auto start = std::chrono::steady_clock::now();
         const auto observe = [&](long status) {
             if (options.observer) {
@@ -159,7 +160,7 @@ ClientOptions client_options(const aauth_client_options* supplied) {
                     response.body.assign(output.body.data, output.body.data + output.body.size);
                 }
             } else {
-                response = netdetail::curl_transport(request);
+                response = fallback(request);
             }
         } catch (...) {
             observe(0);

@@ -9,7 +9,7 @@ from apple_auth import AsyncDevice  # noqa: E402
 
 
 async def main(email):
-    async with AsyncDevice.mac("my-mac", model="Mac17,8", macos="27.0.1") as device:
+    async with AsyncDevice.mac("my-mac", model="Mac17,8", macos="27.0.1", build="26A434") as device:
         session = await device.login(email=email)
         headers = await device.headers()
         print(f"Session saved to {session.path}; {len(headers)} fresh headers available.")

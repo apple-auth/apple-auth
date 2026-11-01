@@ -11,7 +11,7 @@ Json parse_context(ByteView encoded) {
 }
 
 Transport selected(Transport transport) {
-    return transport ? std::move(transport) : netdetail::curl_transport;
+    return transport ? std::move(transport) : netdetail::make_curl_transport();
 }
 } // namespace
 

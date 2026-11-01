@@ -59,6 +59,7 @@ enum class DevicePlatform {
 
 struct MacDevice {
     // Empty fields reuse saved values, or defaults for a new Mac identity.
+    // Reopen with a new version/build pair to update the OS, keeping the model.
     std::string model;
     std::string macos_version;
     std::string macos_build;
@@ -67,6 +68,7 @@ struct MacDevice {
 };
 
 struct IPhoneDevice {
+    // OS version/build can change on reopen; model and device identity stay fixed.
     std::string model;
     std::string ios_version;
     std::string ios_build;

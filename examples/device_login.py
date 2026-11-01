@@ -8,7 +8,7 @@ from apple_auth import Device  # noqa: E402
 
 
 if __name__ == "__main__":
-    with Device.mac("my-mac", model="Mac17,8", macos="27.0.1") as device:
+    with Device.mac("my-mac", model="Mac17,8", macos="27.0.1", build="26A434") as device:
         session = device.login(email=input("Apple ID: ").strip())
         headers = device.headers()
         print(f"Session saved to {session.path}; {len(headers)} fresh headers available.")

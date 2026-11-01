@@ -79,8 +79,7 @@ void validate_iphone_device(const IPhoneDevice& device) {
 }
 
 IPhoneDevice resolve_iphone_device(const IPhoneDevice& requested, IPhoneDevice saved) {
-    if ((!requested.ios_version.empty() && requested.ios_version != saved.ios_version) ||
-        (!requested.model.empty() && requested.model != saved.model)) {
+    if (!requested.ios_version.empty() && requested.ios_version != saved.ios_version) {
         saved.ios_build.clear();
     }
     if (!requested.model.empty()) {
@@ -92,24 +91,9 @@ IPhoneDevice resolve_iphone_device(const IPhoneDevice& requested, IPhoneDevice s
     if (!requested.ios_build.empty()) {
         saved.ios_build = requested.ios_build;
     }
-    require(!saved.ios_build.empty(), "Provide an explicit iOS build for custom iPhone metadata");
+    require(!saved.ios_build.empty(), "Changing iOS version requires an explicit iOS build");
     validate_iphone_device(saved);
     return saved;
-}
-
-std::string known_macos_build(const std::string& version) {
-    constexpr std::pair<const char*, const char*> releases[] = {{"13.1", "22C65"},
-                                                                {"14.4.1", "23E224"},
-                                                                {"15.0", "24A335"},
-                                                                {"26.2", "25C56"},
-                                                                {"27.0.1", "26A434"},
-                                                                {"27.2", "26B123"}};
-    for (const auto& [release, build] : releases) {
-        if (version == release) {
-            return build;
-        }
-    }
-    return {};
 }
 
 void validate_mac_device(const MacDevice& device) {
@@ -130,13 +114,12 @@ MacDevice resolve_mac_device(const MacDevice& requested, MacDevice saved) {
     }
     if (!requested.macos_version.empty() && requested.macos_version != saved.macos_version) {
         saved.macos_version = requested.macos_version;
-        saved.macos_build = known_macos_build(saved.macos_version);
+        saved.macos_build.clear();
     }
     if (!requested.macos_build.empty()) {
         saved.macos_build = requested.macos_build;
     }
-    require(!saved.macos_build.empty(),
-            "Unknown macOS release; provide its macOS build explicitly");
+    require(!saved.macos_build.empty(), "Changing macOS version requires an explicit macOS build");
     validate_mac_device(saved);
     return saved;
 }
@@ -353,10 +336,11 @@ struct Client::Impl {
             validate_mac_device(saved);
             mac_device = resolve_mac_device(options.mac_device, saved);
             netdetail::require(
-                new_identity || mac_device == saved,
-                "Mac model or macOS differs from saved identity; use a new state directory");
-            if (new_identity) {
+                new_identity || mac_device.model == saved.model,
+                "Mac model differs from saved identity; use a new state directory");
+            if (new_identity || mac_device != saved || !identity.contains("mac_device")) {
                 identity["mac_device"] = mac_device_json(mac_device);
+                identity_upgraded = true;
             }
         }
         const bool iphone = description->platform == DevicePlatform::iphone;
@@ -373,12 +357,13 @@ struct Client::Impl {
             validate_iphone_device(saved);
             iphone_device = resolve_iphone_device(options.iphone_device, saved);
             netdetail::require(
-                new_identity || iphone_device == saved,
-                "iPhone model or iOS differs from saved identity; use a new state directory");
-            if (new_identity) {
+                new_identity || iphone_device.model == saved.model,
+                "iPhone model differs from saved identity; use a new state directory");
+            if (new_identity || iphone_device != saved || !identity.contains("iphone_device")) {
                 identity["iphone_device"] = {{"model", iphone_device.model},
                                              {"ios_version", iphone_device.ios_version},
                                              {"ios_build", iphone_device.ios_build}};
+                identity_upgraded = true;
             }
         }
         const auto& local_user = identity.at("local_user_hash").get_ref<const std::string&>();
@@ -664,8 +649,7 @@ Headers Client::developer_headers(const DeveloperSession& session) {
     auto result = headers();
     result["X-Apple-GS-Token"] = session.token;
     result["X-Apple-I-Identity-Id"] = session.account_id;
-    result["X-Apple-App-Info"] = "com.apple.gs.xcode.auth";
-    result["User-Agent"] = "Xcode";
+    netdetail::apply_xcode_headers(result);
     netdetail::apply_device_headers(result, impl_->options);
     return result;
 }

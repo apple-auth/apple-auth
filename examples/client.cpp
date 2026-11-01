@@ -8,7 +8,7 @@ void usage() {
                  "       apple-auth login STATE_DIR CREDENTIALS_FILE [OPTIONS]\n"
                  "Options: --device windows|mac|iphone|android\n"
                  "         --mac-model MacBookAir10,1 --macos-version 14.4.1\n"
-                 "         --macos-build 23E224 (required for unknown releases)\n"
+                 "         --macos-build 23E224 (required when changing macOS version)\n"
                  "         --user-agent AGENT --client-info INFO\n"
                  "         --header 'Name: value' (repeatable)\n"
                  "Credentials file: Apple ID on line one, password on line two.\n";

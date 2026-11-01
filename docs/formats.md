@@ -64,6 +64,10 @@ binding randomly when creating a device.
 
 `hardware_hash` is the client's synthetic binding value. It is generated separately
 from the model, serial number and other device description fields.
+The OS version/build may be updated together when reopening the device. This
+changes only `mac_device` / `iphone_device`; the device ID, hardware binding,
+provisioning profile and saved sessions are retained. Model, platform and serial
+changes require a separate identity directory.
 
 `store/identity.json` has its own schema (`version: 1`) with `device_id`,
 `hardware_hash` and `guid`. The Store `guid` is a randomly generated six-byte value

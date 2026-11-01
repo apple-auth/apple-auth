@@ -123,11 +123,22 @@ for dependency directories, separated by semicolons.
 | Store login / saved session | `login_store(...)`, `store_session` |
 | Signed Store request | `store_request(url_or_bag_key, method="GET", body=b"", headers=None)` |
 
-`Device.mac()` accepts `model`, `macos`, `build` and `serial_number`. Unknown OS
-versions require an explicit build. Omit `state` to allocate a local directory.
+`Device.mac()` accepts `model`, `macos`, `build` and `serial_number`. Any version
+and build with valid syntax is accepted; there is no built-in release table.
+When selecting a different OS version, supply its matching build explicitly.
+Omit both to reuse the saved OS or the default for a new device.
+Omit `state` to allocate a local directory.
 Use context managers; serialize synchronous operations on each device.
 `Device.iphone()` accepts `model`, `ios`, `build` and `serial_number` and keeps
-Mac ADI for provisioning. Supply the iOS build when changing its model or version.
+Mac ADI for provisioning. Supply the iOS build when changing the OS version.
+Reopen the same directory to update macOS/iOS metadata while retaining the device
+ID, hardware binding, provisioning and saved account sessions. The model, platform
+and serial number must remain the same. Close the previous instance first.
+
+```python
+with Device.mac("my-mac", macos="27.2", build="26B123") as device:
+    print(device.info)
+```
 
 Every device factory accepts `user_agent`, `client_info` and a `headers` dictionary.
 This includes Mac, iPhone, Windows, Android, `Device.open()` and `AsyncDevice`.
@@ -167,6 +178,30 @@ Swift's `Device` initializer and `open()` accept `userAgent`, `clientInfo` and
 `headers: [String: String]`. The C API provides
 `aauth_client_create_configured_v5()` with a JSON header object; older entry points
 remain available.
+
+Developer Session and trusted-device/SMS 2FA use the same header overrides.
+The default Xcode profile is `User-Agent: Xcode`,
+`X-Apple-App-Info: com.apple.gs.xcode.auth`, and
+`X-Xcode-Version: 27.2 (27B52)`. Override any of them through `headers`;
+explicit values win in outgoing requests and `developer_headers()`:
+
+```python
+with Device.mac("my-mac", headers={
+    "X-Xcode-Version": "27.2 (27B52)",
+    "User-Agent": "Xcode",
+    "X-Apple-App-Info": "com.apple.gs.xcode.auth",
+}) as device:
+    developer = device.developer_session()  # Requires a saved authenticated account.
+    headers = device.developer_headers(developer)
+```
+
+The built-in curl transport keeps a handle per transport instance, reusing its
+connections, DNS cache and TLS sessions. Copies share that instance and serialize
+HTTP operations. The combined system/Apple PEM roots are cached on first use for
+the lifetime of the process; restart the process to pick up changed system roots.
+Backends without `CAINFO_BLOB` reuse one private PEM file per transport and remove
+it when the last copy of the transport is destroyed. Custom transports keep their
+own connection and certificate policies.
 
 The `apple-auth` CLI accepts `--user-agent`, `--client-info` and repeated
 `--header 'Name: value'` arguments.

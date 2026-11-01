@@ -220,9 +220,19 @@ Replace the email with your account. Missing password and verification callbacks
 prompt locally. `login()` performs a login and saves its result; reading
 `session` loads the previous result without logging in. `Device.mac()` accepts
 `model`, `macos`, `build` and `serial_number`; `Device.iphone()` uses `ios` in
-place of `macos`. Unknown OS versions require an explicit build. Reopening must
-preserve the saved identity settings. Serial numbers are optional, omitted by
-default and never taken from the host.
+place of `macos`. Versions/builds are syntax-checked without a fixed release list.
+When changing the OS version, supply its matching build; omitting both reuses saved
+metadata or the default for a new identity. Reopening the same directory may
+update the OS version/build while preserving model, platform, serial, device ID,
+hardware binding, provisioning and account sessions. Close the previous instance
+before reopening. Serial numbers are optional, omitted by default and never taken
+from the host.
+
+```python
+# Update only OS metadata for an existing identity, without provisioning again.
+with Device.mac("my-macbook", macos="27.2", build="26B123") as device:
+    print(device.info)
+```
 
 ```python
 import asyncio
@@ -270,6 +280,65 @@ fields; a PET string alone is insufficient.
 `login_with_options()` for an explicit verification method/phone selector.
 `developer_session(account)` exchanges the account session for a Developer
 token; `developer_headers(session)` builds fresh request headers.
+
+### Xcode headers and transport reuse
+
+The default Xcode headers for trusted-device/SMS 2FA, Developer Session exchange
+and Developer request headers are `User-Agent: Xcode`,
+`X-Apple-App-Info: com.apple.gs.xcode.auth`, and `X-Xcode-Version: 27.2 (27B52)`.
+Pass custom values through the device's existing header map. Overrides are
+case-insensitive and win over protocol defaults for both outgoing requests and
+returned Developer headers. They are configuration of the client, not fields
+stored in the Developer Session token; supply them again when reopening.
+
+```python
+with Device.mac("my-macbook", headers={
+    "X-Xcode-Version": "27.2 (27B52)",
+    "User-Agent": "Xcode",
+    "X-Apple-App-Info": "com.apple.gs.xcode.auth",
+}) as device:
+    account = device.login(email="name@example.invalid")
+    developer = device.developer_session(account)
+    headers = device.developer_headers(developer)
+```
+
+```swift
+let device = try Device(directory: stateDirectory, headers: [
+    "X-Xcode-Version": "27.2 (27B52)",
+    "User-Agent": "Xcode",
+    "X-Apple-App-Info": "com.apple.gs.xcode.auth",
+])
+let account = try await device.login(email: email, password: password,
+                                     verification: Verification(code: requestCode))
+let developer = try await device.developerSession(account: account)
+let headers = try await device.developerHeaders(session: developer)
+```
+
+```cpp
+apple_auth::ClientOptions options;
+options.device_platform = apple_auth::DevicePlatform::mac;
+options.headers = {{"X-Xcode-Version", "27.2 (27B52)"},
+                   {"User-Agent", "Xcode"},
+                   {"X-Apple-App-Info", "com.apple.gs.xcode.auth"}};
+apple_auth::Client device("my-macbook", options);
+auto account = device.login(email, password, request_code);
+auto developer = device.developer_session(account);
+auto headers = device.developer_headers(developer);
+```
+
+C callers pass the same JSON header map to `aauth_client_create_configured_v5()`.
+The default version is a protocol profile, independent of the host Xcode install;
+applications can select their own version without rebuilding the SDK.
+
+The built-in curl transport retains a handle per transport instance and reuses
+connections, DNS entries and TLS sessions. Copies share the instance; HTTP calls
+on it are serialized. Request options are reset after each call, including error
+paths. System/Apple PEM roots are cached at first use for the process lifetime;
+restart to refresh changed system roots. A backend without `CAINFO_BLOB` reuses a
+private PEM file until the last transport copy is destroyed. Custom transports
+manage their own caches and trust configuration.
+
+### Account CLI
 
 ```sh
 apple-auth provision mac-device --device mac
@@ -826,7 +895,7 @@ synthetic IDs and mock responses do not authenticate an account.
 | `platform` / native `device_platform` | `None` | `"mac"`, `"iphone"`, `"windows"`, `"android"`; `None` reuses saved state or selects Windows for a new generic device. |
 | `model` | `None` | Mac/iPhone model, e.g. `"MacBookAir10,1"`; use `"iPhone12,1"` with the iPhone preset. |
 | `os_version` | `None` | Generic constructor name; factory aliases are `macos="14.4.1"` and `ios="17.4.1"`. |
-| `os_build` | `None` | Generic constructor name; factory alias is `build="23E224"` (Mac) or `"21E236"` (iPhone). Supply a matching build for an unknown version. |
+| `os_build` | `None` | Generic constructor name; factory alias is `build="23E224"` (Mac) or `"21E236"` (iPhone). Supply a matching build when selecting a different OS version. |
 | `serial_number` | `None` | Optional explicit serial, e.g. `"DEMO-MAC-001"`; up to 32 ASCII letters/digits/hyphens. New devices omit it by default. |
 | `user_agent` | `None` | `"MyClient/1.0"`; sets `User-Agent` unless replaced in `headers`. |
 | `client_info` | `None` | Device description for `X-MMe-Client-Info`; omit to use the preset. |
@@ -1784,7 +1853,7 @@ transport responses use `aauth_client_buffer_alloc()` as described in the header
 | --- | --- |
 | Python cannot load the native library | Build shared client libraries; set `APPLE_AUTH_LIBRARY` and Windows dependency directories if needed |
 | Download API/CLI missing | Reconfigure with `APPLE_AUTH_WITH_TESTFLIGHT=ON`; CLI tools also need examples enabled |
-| Saved identity does not match requested settings | Reopen with saved platform/model/OS/serial settings; use a new directory for another identity |
+| Saved identity does not match requested settings | Keep saved platform/model/serial; OS version/build may be updated together. Use a new directory for another device identity. |
 | ADI profile fails to load | Restore its matching `identity.json` and binding; keep GrandSlam/Store profiles separate |
 | PET rejected before Mac login | Check matching account and saved PET expiry; explicitly perform a new account login when needed |
 | Context export finds no root cookies | Check session protocol and cookie expiry; a local plist load alone does not establish validity |

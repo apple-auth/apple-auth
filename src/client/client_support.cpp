@@ -96,7 +96,7 @@ void apply_device_headers(Headers& headers, const ClientOptions& options) {
 
 Transport configured_transport(const ClientOptions& options) {
     validate_device_headers(options);
-    auto transport = options.transport ? options.transport : curl_transport;
+    auto transport = options.transport ? options.transport : make_curl_transport();
     Headers overrides;
     apply_device_headers(overrides, options);
     if (overrides.empty()) {
@@ -108,6 +108,19 @@ Transport configured_transport(const ClientOptions& options) {
         merge_headers(configured.headers, overrides);
         return transport(configured);
     };
+}
+
+void apply_xcode_headers(Headers& headers) {
+    // Callers can override this through ClientOptions::headers in every binding.
+    // https://developer.apple.com/news/releases/?id=10292026a
+    headers["X-Apple-App-Info"] = "com.apple.gs.xcode.auth";
+    headers["User-Agent"] = "Xcode";
+    const auto version = std::find_if(headers.begin(), headers.end(), [](const auto& field) {
+        return header_key(field.first) == "x-xcode-version";
+    });
+    if (version == headers.end()) {
+        headers["X-Xcode-Version"] = "27.2 (27B52)";
+    }
 }
 
 void check_apple_endpoint(const std::string& url) {

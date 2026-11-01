@@ -45,7 +45,9 @@ jobs:
               "Prebuilt AppleAuth SDK for iOS 13+ and macOS 12+.\n\n"
               "Download `AppleAuth.zip`, extract it, and add the enclosed directory as a local Swift package in Xcode. "
               "It includes provisioning, anisette, GrandSlam login, trusted-device/SMS verification, "
-              "and Developer Session exchange through URLSession. No local CMake or dependency installation is needed.\n\n"
+              "and Developer Session exchange through URLSession. "
+              "Optional AES-256-GCM storage and in-memory session serialization use application-supplied keys; "
+              "existing plaintext saves remain supported. No local CMake or dependency installation is needed.\n\n"
               "`apple_auth.xcframework.zip` contains the native C/C++ library. "
               "Device arm64, simulator arm64/x86_64, and macOS arm64/x86_64 slices are included.\n",
               encoding="utf-8")

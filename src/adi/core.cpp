@@ -83,7 +83,7 @@ ErrorCode Error::code() const noexcept {
 }
 
 const char* version() noexcept {
-    return "0.1.0";
+    return "0.1.1";
 }
 
 HardwareId hardware_id(const HardwareFields& fields) {

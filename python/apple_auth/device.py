@@ -1,11 +1,12 @@
 """Persistent device workflow and automatic account-session persistence."""
 from __future__ import annotations
 import getpass
+from dataclasses import replace
 import os
 from pathlib import Path
 from typing import Callable
 from uuid import uuid4
-from .models import DeviceInfo, HttpRequest, HttpResponse, Session
+from .models import DeviceInfo, HttpRequest, HttpResponse, Session, TrustedPhoneNumber, Verification, _verification
 from .native import AccountSession, Library, StoreSession
 
 def _new_device_directory() -> Path:
@@ -14,6 +15,17 @@ def _new_device_directory() -> Path:
     else:
         root = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
     return root / "apple-auth" / "devices" / uuid4().hex
+
+
+def _prompt_phone(phones: tuple[TrustedPhoneNumber, ...]) -> int:
+    if len(phones) == 1:
+        return phones[0].id
+    for index, phone in enumerate(phones, 1):
+        print(f"{index}. {phone.display_number}")
+    choice = int(input("Trusted phone number [1]: ").strip() or "1")
+    if not 1 <= choice <= len(phones):
+        raise ValueError("Invalid trusted phone number choice")
+    return phones[choice - 1].id
 
 
 class Device:
@@ -207,15 +219,18 @@ class Device:
         return self._client.headers()
 
     def login(self, *, email: str, password: str | None = None,
-              two_factor: Callable[[], str] | None = None) -> Session:
+              two_factor: Callable[[], str] | None = None,
+              verification: Verification | None = None) -> Session:
         """Log in and save the session. Missing password/2FA callbacks prompt locally."""
+        options = _verification(two_factor, verification)
+        prompt = "SMS verification code: " if options.method == "sms" else "Apple ID verification code: "
+        options = replace(options, code=options.code or (lambda: input(prompt).strip()),
+                          select_phone=options.select_phone or _prompt_phone)
         self.provision()
         if password is None:
             password = getpass.getpass("Apple ID password: ")
-        if two_factor is None:
-            two_factor = lambda: input("Trusted-device verification code: ").strip()
         try:
-            with self._client.login(email, password, two_factor) as native_session:
+            with self._client.login(email, password, verification=options) as native_session:
                 path = self.state / "account-session.plist" if self.state is not None else None
                 session = Session._decode(native_session.plist(), path)
                 self._client.set_session_data(native_session.serialize(encryption_key=self._encryption_key))

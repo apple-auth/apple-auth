@@ -4,11 +4,13 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import CancelledError as WorkerCancelledError, ThreadPoolExecutor
 import contextvars
+from dataclasses import replace
 import inspect
 import os
 from pathlib import Path
 import threading
 from typing import Awaitable, Callable, TYPE_CHECKING
+from .models import Verification, _verification
 
 if TYPE_CHECKING:
     from apple_auth import Device, DeviceInfo, Session, StoreSession, HttpResponse
@@ -36,9 +38,7 @@ class _Operation:
         if self._cancelled.is_set():
             raise WorkerCancelledError("Login caller was cancelled")
 
-    def verification_code(self, callback, loop) -> str:
-        self._check_cancelled()
-        value = callback() if callback else input("Trusted-device verification code: ").strip()
+    def _resolve(self, value, loop):
         if inspect.isawaitable(value):
             async def receive():
                 token = _VERIFICATION_DEVICE.set(self.device)
@@ -66,9 +66,19 @@ class _Operation:
                     self._verification = None
             value = result
         self._check_cancelled()
-        if not isinstance(value, str):
-            raise TypeError("two_factor must return a string")
         return value
+
+    def verification_code(self, callback, loop, method="automatic") -> str:
+        self._check_cancelled()
+        prompt = "SMS verification code: " if method == "sms" else "Apple ID verification code: "
+        value = self._resolve(callback() if callback else input(prompt).strip(), loop)
+        if not isinstance(value, str):
+            raise TypeError("Verification code callback must return a string")
+        return value
+
+    def phone_number(self, callback, phones, loop):
+        self._check_cancelled()
+        return self._resolve(callback(phones), loop)
 
 
 async def _finish_native(future, operation=None):
@@ -251,11 +261,16 @@ class AsyncDevice:
         return await self._call(lambda device: device.session)
 
     async def login(self, *, email: str, password: str | None = None,
-                    two_factor: Callable[[], str | Awaitable[str]] | None = None) -> Session:
+                    two_factor: Callable[[], str | Awaitable[str]] | None = None,
+                    verification: Verification | None = None) -> Session:
+        options = _verification(two_factor, verification)
         operation = _Operation(self)
+        callbacks = replace(options,
+            code=lambda: operation.verification_code(options.code, self._loop, options.method),
+            select_phone=(lambda phones: operation.phone_number(options.select_phone, phones, self._loop))
+                         if options.select_phone is not None else None)
         return await self._call(
-            lambda device: device.login(email=email, password=password,
-                two_factor=lambda: operation.verification_code(two_factor, self._loop)), operation)
+            lambda device: device.login(email=email, password=password, verification=callbacks), operation)
 
     async def provision_store(self) -> AsyncDevice:
         await self._call(lambda device: device.provision_store())

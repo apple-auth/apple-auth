@@ -36,7 +36,10 @@ with Device.mac(                     # iPhone Duo: Device.iphone(
   <sub>MacBook Pro and iPhone Duo after signing in with the Python example.</sub>
 </p>
 
-Passwords and trusted-device 2FA codes are prompted when needed. Device state and
+Passwords and 2FA codes are prompted when needed. Choose SMS with
+`verification=Verification(method="sms")` (`from apple_auth import Verification`).
+See [Python verification options](docs/full-docs.md#python-verification-options)
+for phone selection and async callbacks. Device state and
 sessions are saved automatically; `Device.open("my-macbook")` reopens them.
 `AsyncDevice` provides the same workflow with `async with` and `await`.
 

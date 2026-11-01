@@ -4,6 +4,7 @@ from __future__ import annotations
 import ctypes as c
 import base64
 import json
+import inspect
 import os
 from pathlib import Path
 import sys
@@ -11,7 +12,7 @@ import sysconfig
 from typing import Callable
 from urllib.parse import urlsplit
 
-from .models import DeviceInfo, HttpRequest, HttpResponse, HttpTiming
+from .models import DeviceInfo, HttpRequest, HttpResponse, HttpTiming, TrustedPhoneNumber, Verification, _verification
 
 DEVICE_PLATFORMS = ("windows", "mac", "iphone", "android")
 _PLATFORM_IDS = {name: index for index, name in enumerate(DEVICE_PLATFORMS, 1)}
@@ -41,6 +42,7 @@ _Transport = c.CFUNCTYPE(c.c_int, c.c_void_p, c.POINTER(_Request), c.POINTER(_Re
 _Observer = c.CFUNCTYPE(None, c.c_void_p, c.c_char_p, c.c_char_p, c.c_long, c.c_double)
 _Clock = c.CFUNCTYPE(c.c_int64, c.c_void_p)
 _TwoFactor = c.CFUNCTYPE(c.c_int, c.c_void_p, c.c_void_p, c.c_size_t, c.POINTER(c.c_size_t))
+_PhoneSelection = c.CFUNCTYPE(c.c_int, c.c_void_p, c.c_char_p, c.POINTER(c.c_int64))
 
 
 class _Options(c.Structure):
@@ -70,7 +72,7 @@ class _ClientConfig(c.Structure):
 
 class _VerificationOptions(c.Structure):
     _fields_ = [("method", c.c_int), ("phone_number_id", c.c_int64),
-                ("code", _TwoFactor), ("select_phone", c.c_void_p), ("context", c.c_void_p)]
+                ("code", _TwoFactor), ("select_phone", _PhoneSelection), ("context", c.c_void_p)]
 
 
 def _utf8(value: str, field_name: str) -> bytes:
@@ -468,8 +470,9 @@ class Client(_NativeClient):
                                      self._handle, check=self._check)
         return json.loads(value)
 
-    def login(self, email: str, password: str, two_factor: Callable[[], str] | None = None) -> AccountSession:
-        return self._login(email, password, two_factor, store=False)
+    def login(self, email: str, password: str, two_factor: Callable[[], str] | None = None,
+              *, verification: Verification | None = None) -> AccountSession:
+        return self._login(email, password, two_factor, store=False, verification=verification)
 
     def login_store(self, email: str, password: str, two_factor: Callable[[], str] | None = None) -> StoreSession:
         return self._login(email, password, two_factor, store=True)
@@ -503,12 +506,20 @@ class Client(_NativeClient):
             self._handle, _utf8(session["account_id"], "Account ID"), _utf8(session["token"], "Token"),
             session["expires_at_ms"], check=self._check))
 
-    def _login(self, email, password, two_factor, *, store):
+    def _login(self, email, password, two_factor, *, store, verification=None):
         self._prepare()
+        selected = None if store else _verification(two_factor, verification)
+        code_callback = two_factor if store else selected.code
 
         def verify(_context, output, capacity, written):
             try:
-                code = two_factor().encode("ascii")
+                value = code_callback()
+                if inspect.isawaitable(value):
+                    if inspect.iscoroutine(value): value.close()
+                    raise TypeError("Use AsyncDevice for async verification callbacks")
+                if not isinstance(value, str):
+                    raise TypeError("Verification code callback must return a string")
+                code = value.encode("ascii")
                 if len(code) > capacity:
                     raise ValueError("Verification code exceeds the callback buffer")
                 c.memmove(output, code, len(code))
@@ -518,14 +529,34 @@ class Client(_NativeClient):
                 self._callback_error = error
                 return -1
 
-        callback = _TwoFactor(verify) if two_factor else _TwoFactor()
+        def choose(_context, phones_json, output):
+            try:
+                fields = json.loads(phones_json.decode("utf-8"))
+                phones = tuple(TrustedPhoneNumber(id=value["id"], display_number=value["display_number"])
+                               for value in fields)
+                phone_id = selected.select_phone(phones)
+                if inspect.isawaitable(phone_id):
+                    if inspect.iscoroutine(phone_id): phone_id.close()
+                    raise TypeError("Use AsyncDevice for async phone selection")
+                if type(phone_id) is not int or not 0 < phone_id < 2**63:
+                    raise ValueError("Phone selection must return a positive Apple phone ID")
+                output[0] = phone_id
+                return 0
+            except BaseException as error:
+                self._callback_error = error
+                return -1
+
+        callback = _TwoFactor(verify) if code_callback else _TwoFactor()
+        phone_callback = _PhoneSelection(choose) if selected and selected.select_phone else _PhoneSelection()
         result = c.c_void_p()
         try:
             if store:
                 status = self._library._native.aauth_client_store_login(self._handle, _utf8(email, "Apple ID"),
                     _utf8(password, "Password"), callback, None, c.byref(result))
             else:
-                verification = _VerificationOptions(0, 0, callback, None, None)
+                verification = _VerificationOptions(
+                    ("automatic", "trusted_device", "sms").index(selected.method),
+                    selected.phone_number_id, callback, phone_callback, None)
                 status = self._library._native.aauth_client_login(self._handle, _utf8(email, "Apple ID"),
                     _utf8(password, "Password"), c.byref(verification), c.byref(result))
             self._check(status)

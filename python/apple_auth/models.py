@@ -4,6 +4,43 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import plistlib
+from typing import Awaitable, Callable, Literal
+
+
+@dataclass(frozen=True)
+class TrustedPhoneNumber:
+    """Apple's phone identifier and masked display number; not a list index."""
+
+    id: int
+    display_number: str
+
+
+@dataclass(frozen=True)
+class Verification:
+    """GrandSlam verification options. AsyncDevice also awaits async callbacks."""
+
+    code: Callable[[], str | Awaitable[str]] | None = None
+    method: Literal["automatic", "trusted_device", "sms"] = "automatic"
+    phone_number_id: int = 0
+    select_phone: Callable[[tuple[TrustedPhoneNumber, ...]], int | Awaitable[int]] | None = None
+
+    def __post_init__(self):
+        if self.method not in ("automatic", "trusted_device", "sms"):
+            raise ValueError("Verification method must be automatic, trusted_device or sms")
+        if type(self.phone_number_id) is not int or not 0 <= self.phone_number_id < 2**63:
+            raise ValueError("phone_number_id must be a non-negative signed 64-bit integer")
+        if self.code is not None and not callable(self.code):
+            raise TypeError("Verification code must be a callback")
+        if self.select_phone is not None and not callable(self.select_phone):
+            raise TypeError("select_phone must be a callback")
+
+
+def _verification(two_factor, verification):
+    if verification is not None and not isinstance(verification, Verification):
+        raise TypeError("verification must be a Verification object")
+    if verification is not None and two_factor is not None:
+        raise ValueError("Pass either two_factor or verification, not both")
+    return verification if verification is not None else Verification(code=two_factor)
 
 @dataclass(frozen=True)
 class HttpRequest:

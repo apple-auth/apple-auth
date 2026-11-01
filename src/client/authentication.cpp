@@ -259,6 +259,7 @@ Json grandslam_login(const std::string& email,
             const auto secondary_url = grandslam_url(urls, "secondaryAuth");
             auto sms_headers = trusted_device_headers(
                 authentication_headers(fresh_headers, clock()), identity_token);
+            sms_headers["Content-Type"] = "application/json";
             sms_headers["Accept"] = "application/json";
             std::int64_t phone_id = verification ? verification->phone_number_id : 0;
             bool already_sent = false;
@@ -296,13 +297,11 @@ Json grandslam_login(const std::string& email,
                         "SMS phone selection was canceled or is invalid");
                 already_sent = configuration.status == 201 && phone_id == choices.front().id;
             }
-            sms_headers["Content-Type"] = "text/x-xml-plist";
-            sms_headers["Accept"] = "text/x-xml-plist";
-            const auto server_info = Json{{"phoneNumber.id", std::to_string(phone_id)}};
             if (!already_sent) {
-                const auto payload = encode_plist(Json{{"serverInfo", server_info}});
+                const auto payload =
+                    bytes(Json{{"phoneNumber", {{"id", phone_id}}}, {"mode", "sms"}}.dump());
                 const auto delivery =
-                    http(secondary_url + "/verify/phone/put?mode=sms", payload, sms_headers);
+                    http(secondary_url + "/verify/phone", payload, sms_headers, "PUT");
                 require(delivery.status == 200 || delivery.status == 201,
                         "Cannot request SMS verification (HTTP " + std::to_string(delivery.status) +
                             ")");
@@ -325,17 +324,16 @@ Json grandslam_login(const std::string& email,
 
             require(code.size() == 6 && code.find_first_not_of("0123456789") == std::string::npos,
                     "2FA must contain six digits");
-            const auto payload = encode_plist(Json{
-                {"securityCode.code", code},
-                {"serverInfo", {{"mode", "sms"}, {"phoneNumber.id", std::to_string(phone_id)}}}});
+            const auto payload = bytes(Json{{"phoneNumber", {{"id", phone_id}}},
+                                            {"mode", "sms"},
+                                            {"securityCode", {{"code", code}}}}
+                                           .dump());
             sms_headers = trusted_device_headers(authentication_headers(fresh_headers, clock()),
                                                  identity_token);
-            sms_headers["Content-Type"] = "text/x-xml-plist";
-            sms_headers["Accept"] = "text/x-xml-plist";
+            sms_headers["Content-Type"] = "application/json";
+            sms_headers["Accept"] = "application/json";
             const auto verified =
-                http(secondary_url + "/verify/phone/securitycode?referrer=/auth/verify/phone/put",
-                     payload,
-                     sms_headers);
+                http(secondary_url + "/verify/phone/securitycode", payload, sms_headers);
             const auto confirmed = std::any_of(
                 verified.headers.begin(), verified.headers.end(), [](const auto& field) {
                     auto name = field.first;
@@ -344,7 +342,9 @@ Json grandslam_login(const std::string& email,
                     });
                     return name == "x-apple-pe-token" && !field.second.empty();
                 });
-            require(verified.status == 200 && confirmed, "Apple did not confirm the SMS code");
+            require(verified.status == 200 && confirmed,
+                    "Apple did not confirm the SMS code (HTTP " +
+                        std::to_string(verified.status) + ")");
             continue;
         }
         if (!trusted_device_code_already_sent(complete, session)) {

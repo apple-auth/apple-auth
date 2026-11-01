@@ -30,7 +30,7 @@ native signatures; the focused guides linked below cover protocol internals.
 | --- | --- | --- | --- | --- | --- |
 | Persistent identity, provisioning and anisette | Yes | Yes | `Device`, `AsyncDevice` | `Device` | `apple-auth provision` |
 | GrandSlam login and account-session persistence | Yes | Yes | Yes | Yes | `apple-auth login` |
-| GrandSlam trusted-device / SMS verification selection | `VerificationOptions` | `aauth_client_login` | Code callback; no method selector | `Verification` | Trusted-device code callback |
+| GrandSlam trusted-device / SMS verification selection | `VerificationOptions` | `aauth_client_login` | `Verification` | `Verification` | Trusted-device code callback |
 | Developer Services token and headers | Yes | Yes | Yes | Yes | No command |
 | Android Apple Music Store login and signed requests | Yes | Yes | Yes | `StoreClient` | No command |
 | Mac PET to Mac Accounts Store login | Yes | Yes | Yes | `Device.loginStoreWithPET` | `apple-auth-store` |
@@ -247,9 +247,10 @@ async def main():
 asyncio.run(main())
 ```
 
-`AsyncDevice` has the same factories and awaitable login/Store methods. Its
-verification callback may be a coroutine. Python's public login wrapper accepts
-a code callback, with no explicit trusted-device/SMS method selector.
+`AsyncDevice` has the same factories and awaitable login/Store methods. Both
+Python devices accept `verification=Verification(method="sms")` to choose SMS.
+Code and phone-selection callbacks may be coroutines with `AsyncDevice`.
+See [Python verification options](#python-verification-options) for all fields.
 
 ### Swift
 
@@ -992,8 +993,9 @@ with library.client(
 For native iPhone configuration, select `device_platform="iphone"`, set
 `iphone_model="iPhone12,1"`, `ios_version="17.4.1"`, `ios_build="21E236"`, and leave
 all three Mac metadata arguments `None`. Native `Client(library, directory=None, initial_state=None, ...)`
-accepts the same options. Its `login(email, password, two_factor=None)` requires
-a password and does not supply the high-level `Device` prompts.
+accepts the same options. Its
+`login(email, password, two_factor=None, *, verification=None)` requires a
+password and does not supply the high-level `Device` prompts.
 
 `AsyncDevice` accepts all generic device arguments, plus `executor`. Its factories
 accept the same `macos`/`ios`/`build` aliases as synchronous factories:
@@ -1022,7 +1024,8 @@ async def configured_async_device():
 
 | Method / factory | Parameters and defaults | Example |
 | --- | --- | --- |
-| `Device.login`, `Device.login_store` | Required keyword `email`; `password=None`, `two_factor=None` prompt locally. | `device.login(email=email, password=password, two_factor=request_code)` |
+| `Device.login` | Required keyword `email`; `password=None`, `two_factor=None`, `verification=None`. Missing password/code/phone selectors prompt locally. | `device.login(email=email, password=password, verification=Verification(method="sms"))` |
+| `Device.login_store` | Required keyword `email`; `password=None`, `two_factor=None` prompt locally. | `device.login_store(email=email, password=password, two_factor=request_code)` |
 | `Device.login_store_with_pet` | Required `email`; `account=None` uses saved `device.session`. | `device.login_store_with_pet(email=email, account=account)` |
 | `Device.developer_session` | `account=None` uses saved account. | `device.developer_session(account=account)` |
 | `Device.developer_headers` | Required Developer session dictionary. | `device.developer_headers(session=developer)` |
@@ -1061,6 +1064,88 @@ def account_operations(email, password, request_code):
             mac_store.save("mac-store.plist")
         return headers
 ```
+
+### Python verification options
+
+`from apple_auth import Verification, TrustedPhoneNumber` exposes GrandSlam 2FA
+options for `Device.login`, `AsyncDevice.login` and native `Client.login`.
+The code-only `two_factor=` shortcut remains available; combining it with
+`verification=` raises `ValueError` before login. Store login has its own code
+callback and does not accept these SMS-selection options.
+
+| `Verification` field | Default | Meaning and example |
+| --- | --- | --- |
+| `method` | `"automatic"` | `"automatic"` follows the server challenge; `"trusted_device"` chooses a trusted device; `"sms"` chooses SMS. Example: `Verification(method="sms")`. |
+| `code` | `None` | No-argument callback returning the six-digit code as a string. Example: `Verification(code=lambda: input("Code: ").strip())`. `Device` prompts when absent; native `Client` requires a callback when challenged. |
+| `phone_number_id` | `0` | Zero discovers trusted numbers; a positive signed 64-bit phone ID assigned by Apple skips discovery and selection. Example: `Verification(method="sms", phone_number_id=1)`, only if Apple previously returned ID `1` for this account. |
+| `select_phone` | `None` | Callback receiving `tuple[TrustedPhoneNumber, ...]` and returning a positive phone ID assigned by Apple. Example: `Verification(method="sms", select_phone=lambda phones: phones[0].id)`. It is unused with an explicit `phone_number_id`. |
+
+`TrustedPhoneNumber.id` is Apple's identifier, not a list index or the phone
+number itself. `display_number` is the masked string supplied by Apple.
+`Device` selects the only number automatically or prompts if there are several.
+Native `Client` selects a single discovered number automatically, but requires a
+selector for multiple numbers. A callback exception cancels login and propagates
+to the Python caller.
+
+All fields together, with a synchronous selector and a hidden code prompt:
+
+```python
+import getpass
+from apple_auth import Device, TrustedPhoneNumber, Verification
+
+def choose_phone(phones: tuple[TrustedPhoneNumber, ...]) -> int:
+    for index, phone in enumerate(phones, 1):
+        print(f"{index}. {phone.display_number}")
+    index = int(input("Phone [1]: ").strip() or "1")
+    if not 1 <= index <= len(phones):
+        raise ValueError("Choose a phone from the list")
+    return phones[index - 1].id
+
+def login_with_sms(email, password):
+    with Device.mac("sms-mac") as device:
+        return device.login(
+            email=email, password=password,
+            verification=Verification(
+                method="sms", phone_number_id=0,
+                select_phone=choose_phone,
+                code=lambda: getpass.getpass("SMS code: ").strip(),
+            ),
+        )
+```
+
+`AsyncDevice` accepts synchronous or async callbacks for both fields. Async
+callbacks run on the device's owning event loop; ordinary callbacks run in its
+worker thread. The selector must return an ID and the code callback a string:
+
+```python
+from apple_auth import AsyncDevice, Verification
+
+async def login_with_sms_ui(email, password, choose_in_ui, request_code_in_ui):
+    async def select_phone(phones):
+        # Your UI returns the selected TrustedPhoneNumber.id.
+        return await choose_in_ui(phones)
+
+    async def code():
+        return await request_code_in_ui()
+
+    async with AsyncDevice.memory() as device:
+        return await device.login(
+            email=email, password=password,
+            verification=Verification(
+                method="sms", phone_number_id=0, select_phone=select_phone, code=code),
+        )
+```
+
+Do not call methods on the same `AsyncDevice` from an async verification callback;
+its login is still using the native client. Such reentry raises `RuntimeError`.
+Cancellation while awaiting a selector/code cancels that callback and waits for
+the native login to finish unwinding before releasing the device. Synchronous
+prompts/callbacks cannot be interrupted while they are blocked.
+
+SMS selection applies only when Apple requires 2FA. A saved identity may complete
+login without a challenge even with `method="sms"`; the SDK does not force SMS
+delivery for an already trusted login. Provisioning a new identity is a separate,
+explicit action. Both directory-backed and in-memory devices support these options.
 
 ### Python Store and download parameters
 
@@ -1911,6 +1996,8 @@ your application and initiate a new login explicitly when appropriate.
 Earlier private integration controls exercised Mac PET/Store/TF downloads,
 Configurator login/free acquisition/iOS IPA, and Mac Store assets/packages.
 They are historical checks; the repository does not include a test suite.
+A live Python check also completed Mac GrandSlam SMS delivery, code verification,
+authenticated login and Developer Session exchange using an in-memory identity.
 A live account check requires your own account/state. Cold-start Mac Store
 provisioning, native iOS ADI, Android SMS verification and Mac installation/launch
 were not established by those controls.

@@ -119,7 +119,7 @@ for dependency directories, separated by semicolons.
 | Create / reopen | `Device.mac(state)`, `Device.iphone(state)`, `Device.windows(state)`, `Device.android(state)` |
 | Reopen saved settings | `Device.open(state)` |
 | Provision / anisette | `provision()`, `headers()` |
-| GrandSlam login / saved session | `login(email=..., password=None, two_factor=None)`, `session` |
+| GrandSlam login / saved session | `login(email=..., password=None, two_factor=None, verification=None)`, `session` |
 | Store login / saved session | `login_store(...)`, `store_session` |
 | Signed Store request | `store_request(url_or_bag_key, method="GET", body=b"", headers=None)` |
 
@@ -194,6 +194,27 @@ with Device.mac("my-mac", headers={
     developer = device.developer_session()  # Requires a saved authenticated account.
     headers = device.developer_headers(developer)
 ```
+
+Select SMS explicitly with `Verification`; the high-level device prompts for a
+code and, when necessary, a trusted phone number. `two_factor=` remains a code-only
+shortcut; pass either it or `verification=`, not both.
+
+```python
+from apple_auth import Device, Verification
+
+with Device.mac("my-mac") as device:
+    account = device.login(email=input("Apple ID: ").strip(),
+                           verification=Verification(method="sms"))
+```
+
+`Verification` also accepts `code`, `phone_number_id=0` and `select_phone`.
+The selector receives a tuple of `TrustedPhoneNumber(id, display_number)` values
+and returns an Apple phone ID. A positive `phone_number_id` skips discovery;
+zero discovers the trusted numbers. `method="automatic"` follows Apple's
+challenge; `"trusted_device"` requests a trusted-device code. These settings
+apply when Apple requires 2FA; they do not force a challenge for a trusted identity.
+`AsyncDevice.login()` accepts the same object and awaits async code/phone callbacks.
+See [all parameters and examples](full-docs.md#python-verification-options).
 
 The built-in curl transport keeps a handle per transport instance, reusing its
 connections, DNS cache and TLS sessions. Copies share that instance and serialize

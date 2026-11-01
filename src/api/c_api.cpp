@@ -1,6 +1,7 @@
 #include <apple_auth/c_api.h>
 #include <apple_auth/core.hpp>
 #include <apple_auth/srp.hpp>
+#include <apple_auth/session_crypto.hpp>
 #include "crypto/backend.hpp"
 
 #include <algorithm>
@@ -90,6 +91,37 @@ void copy(ByteView value,
 } // namespace
 
 extern "C" {
+aauth_status aauth_session_key_generate(std::uint8_t* output, std::size_t capacity) {
+    return guard([&] {
+        require(output);
+        if (capacity < session_key_size) {
+            throw Error(ErrorCode::buffer_too_small, "Output buffer is too small");
+        }
+        auto key = generate_session_key();
+        copy(key, output, capacity);
+        crypto::wipe(key.data(), key.size());
+    });
+}
+
+aauth_status aauth_session_encrypt(const std::uint8_t* data, std::size_t size,
+    const std::uint8_t* key, std::size_t key_size, std::uint8_t* output,
+    std::size_t capacity, std::size_t* written) {
+    return guard([&] {
+        const auto encrypted = encrypt_session(view(data, size), view(key, key_size));
+        copy(encrypted, output, capacity, written);
+    });
+}
+
+aauth_status aauth_session_decrypt(const std::uint8_t* data, std::size_t size,
+    const std::uint8_t* key, std::size_t key_size, std::uint8_t* output,
+    std::size_t capacity, std::size_t* written) {
+    return guard([&] {
+        auto plaintext = decrypt_session(view(data, size), view(key, key_size));
+        struct Wipe { Bytes& value; ~Wipe() { crypto::wipe(value.data(), value.size()); } } wipe{plaintext};
+        copy(plaintext, output, capacity, written);
+    });
+}
+
 aauth_status aauth_srp_create(const std::uint8_t* secret, std::size_t size, aauth_srp** output) {
     return guard([&] {
         require(output && size <= 32);

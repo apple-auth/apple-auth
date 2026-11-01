@@ -758,9 +758,42 @@ aauth_status aauth_client_store_request(aauth_client* client,
 
 void aauth_client_buffer_free(aauth_client_buffer* buffer) {
     if (buffer) {
+        if (buffer->data) {
+            crypto::wipe(buffer->data, buffer->size);
+        }
         delete[] buffer->data;
         *buffer = {};
     }
+}
+aauth_status aauth_client_generate_session_key(aauth_client_buffer* output) {
+    return guard([&] {
+        require(output);
+        auto key = generate_session_key();
+        struct Wipe { Bytes& value; ~Wipe() { crypto::wipe(value.data(), value.size()); } } wipe{key};
+        copy_buffer(key, output);
+    });
+}
+aauth_status aauth_client_encrypt_session(const uint8_t* data, size_t size,
+    const uint8_t* key, size_t key_size, aauth_client_buffer* output) {
+    return guard([&] {
+        require(output && (data || !size) && key && size <= maximum_response_size);
+        copy_buffer(encrypt_session({data, size}, {key, key_size}), output);
+    });
+}
+aauth_status aauth_client_decrypt_session(const uint8_t* data, size_t size,
+    const uint8_t* key, size_t key_size, aauth_client_buffer* output) {
+    return guard([&] {
+        require(output && data && key && size <= maximum_response_size + session_encryption_overhead);
+        auto clear = decrypt_session({data, size}, {key, key_size});
+        struct Wipe { Bytes& value; ~Wipe() { crypto::wipe(value.data(), value.size()); } } wipe{clear};
+        copy_buffer(clear, output);
+    });
+}
+aauth_status aauth_client_save_session(const char* filename, const uint8_t* data, size_t size) {
+    return guard([&] {
+        require((data || !size) && size <= maximum_response_size + session_encryption_overhead);
+        netdetail::write_private(utf8_path(filename), {data, size});
+    });
 }
 aauth_status aauth_client_features(aauth_client_buffer *output) {
     return guard([&] {
@@ -769,7 +802,7 @@ aauth_status aauth_client_features(aauth_client_buffer *output) {
 #else
         constexpr bool downloads = false;
 #endif
-        write_json({{"store_protocols", true}, {"downloads", downloads}}, output);
+        write_json({{"store_protocols", true}, {"downloads", downloads}, {"session_encryption", true}}, output);
     });
 }
 
@@ -910,6 +943,20 @@ aauth_status aauth_testflight_client_from_store_cookies(const uint8_t *data, siz
         (void)output;
         throw apple_auth::Error(ErrorCode::unsupported,
                                 "Rebuild with APPLE_AUTH_WITH_TESTFLIGHT=ON");
+#endif
+    });
+}
+
+aauth_status aauth_testflight_client_serialize(const aauth_testflight_client *client,
+                                               aauth_client_buffer *output) {
+    return guard([&] {
+#ifdef APPLE_AUTH_WITH_TESTFLIGHT
+        require(client && output);
+        copy_buffer(client->value.serialize(), output);
+#else
+        (void)client;
+        (void)output;
+        throw apple_auth::Error(ErrorCode::unsupported, "Rebuild with APPLE_AUTH_WITH_TESTFLIGHT=ON");
 #endif
     });
 }

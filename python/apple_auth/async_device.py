@@ -104,8 +104,10 @@ class AsyncDevice:
                  serial_number: str | None = None, library=None, transport=None, clock=None,
                  user_agent: str | None = None, client_info: str | None = None,
                  headers: dict[str, str] | None = None,
+                 encryption_key: bytes | None = None,
                  executor: ThreadPoolExecutor | None = None):
         from .device import _new_device_directory
+        from .crypto import _key
 
         if executor is not None and not isinstance(executor, ThreadPoolExecutor):
             raise TypeError("executor must be a ThreadPoolExecutor")
@@ -116,7 +118,8 @@ class AsyncDevice:
                               os_build=os_build, serial_number=serial_number,
                               user_agent=user_agent, client_info=client_info,
                               headers=headers.copy() if headers is not None else None,
-                              library=library, transport=transport, clock=clock)
+                              library=library, transport=transport, clock=clock,
+                              encryption_key=_key(encryption_key) if encryption_key is not None else None)
         self._executor = executor
         self._reopen = False
         self._device: Device | None = None

@@ -47,13 +47,17 @@ public struct StoreSession: Sendable, CustomStringConvertible {
         self.plist = plist; accountID = info.account_id; storefront = info.storefront; self.protocol = kind
     }
 
-    public static func load(from file: URL) throws -> StoreSession {
+    public static func load(from file: URL, encryptionKey: Data? = nil) throws -> StoreSession {
         _ = try localPath(file)
-        return try StoreSession(plist: Data(contentsOf: file))
+        return try deserialize(SessionCrypto.read(from: file), encryptionKey: encryptionKey)
     }
 
-    public func save(to file: URL) throws {
+    public func save(to file: URL, encryptionKey: Data? = nil) throws {
         let path = try localPath(file)
+        if let encryptionKey {
+            try SessionCrypto.save(plist, to: file, key: encryptionKey)
+            return
+        }
         try withStore(plist) { try checkClient(aauth_store_session_save($0, path)) }
     }
 
@@ -274,8 +278,9 @@ public struct TestFlightOptions: Sendable, Encodable {
 public final class TestFlightClient: Sendable {
     private let runner: StoreRunner
 
-    public init(savedSession: Data, transport: HTTPTransport? = nil,
+    public init(savedSession: Data, encryptionKey: Data? = nil, transport: HTTPTransport? = nil,
                 options: TestFlightOptions = TestFlightOptions()) async throws {
+        let savedSession = try SessionCrypto.decode(savedSession, key: encryptionKey)
         let runner = StoreRunner(transport: transport, release: { aauth_testflight_client_free($0) })
         self.runner = runner
         let json = String(decoding: try JSONEncoder().encode(options), as: UTF8.self)
@@ -314,8 +319,32 @@ public final class TestFlightClient: Sendable {
     }
 
     public func close() async throws { try await runner.close() }
-    public func save(to file: URL) async throws {
+    public func serialize(encryptionKey: Data? = nil) async throws -> Data {
+        try await runner.perform { handle, _ in
+            try SessionCrypto.encode(clientData { aauth_testflight_client_serialize(handle, $0) }, key: encryptionKey)
+        }
+    }
+
+    public static func deserialize(_ data: Data, encryptionKey: Data? = nil,
+        transport: HTTPTransport? = nil, options: TestFlightOptions = TestFlightOptions()) async throws -> TestFlightClient {
+        try await TestFlightClient(savedSession: data, encryptionKey: encryptionKey, transport: transport, options: options)
+    }
+
+    public static func load(from file: URL, encryptionKey: Data? = nil,
+        transport: HTTPTransport? = nil, options: TestFlightOptions = TestFlightOptions()) async throws -> TestFlightClient {
+        _ = try localPath(file)
+        return try await deserialize(SessionCrypto.read(from: file), encryptionKey: encryptionKey, transport: transport, options: options)
+    }
+
+    public func save(to file: URL, encryptionKey: Data? = nil) async throws {
         let path = try localPath(file)
+        if let encryptionKey {
+            try await runner.perform { handle, _ in
+                try SessionCrypto.save(clientData { aauth_testflight_client_serialize(handle, $0) },
+                    to: file, key: encryptionKey, overwrite: false)
+            }
+            return
+        }
         try await runner.perform { handle, _ in try checkClient(aauth_testflight_client_save(handle, path)) }
     }
     public func catalog() async throws -> Data {

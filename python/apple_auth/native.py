@@ -203,6 +203,10 @@ class Library:
         headers = c.POINTER(_DeviceHeaders)
         shapes = {
             "aauth_client_features": [buffer],
+            "aauth_client_generate_session_key": [buffer],
+            "aauth_client_encrypt_session": [data, size, data, size, buffer],
+            "aauth_client_decrypt_session": [data, size, data, size, buffer],
+            "aauth_client_save_session": [text, data, size],
             "aauth_account_session_from_plist": [data, size, result],
             "aauth_client_developer_session": [handle, handle, buffer],
             "aauth_client_developer_headers": [handle, text, text, c.c_int64, buffer],
@@ -218,6 +222,7 @@ class Library:
             "aauth_testflight_client_create": [data, size, options, text, result],
             "aauth_testflight_client_from_store_cookies": [data, size, options, text, result],
             "aauth_testflight_client_save": [handle, text],
+            "aauth_testflight_client_serialize": [handle, buffer],
             "aauth_testflight_client_catalog": [handle, buffer],
             "aauth_testflight_client_install_metadata": [handle, text, buffer],
             "aauth_testflight_client_download": [handle, text, text, buffer],
@@ -571,15 +576,30 @@ class AccountSession:
         return cls(library, handle)
 
     @classmethod
-    def load(cls, filename, *, library: Library | None = None) -> AccountSession:
-        return cls.from_plist(Path(filename).read_bytes(), library=library)
+    def load(cls, filename, *, encryption_key=None, library: Library | None = None) -> AccountSession:
+        from .crypto import _read
+        return cls.deserialize(_read(filename), encryption_key=encryption_key, library=library)
+
+    @classmethod
+    def deserialize(cls, data: bytes, *, encryption_key=None, library=None) -> AccountSession:
+        from .crypto import _decode, _library
+        lib = _library(library)
+        return cls.from_plist(_decode(data, encryption_key, lib), library=lib)
+
+    def serialize(self, *, encryption_key=None) -> bytes:
+        from .crypto import _encode
+        return _encode(self.plist(), encryption_key, self._library)
 
     def _require_open(self):
         if not self._handle:
             raise RuntimeError("Account session is closed")
 
-    def save(self, filename):
+    def save(self, filename, *, encryption_key=None):
         self._require_open()
+        if encryption_key is not None:
+            from .crypto import _save
+            _save(filename, self.plist(), encryption_key, self._library)
+            return
         self._library._check(self._library._native.aauth_account_session_save(self._handle, _path(filename)))
 
     def plist(self) -> bytes:
@@ -614,6 +634,7 @@ class StoreSession:
     def __init__(self, library: Library, handle):
         self._library, self._handle = library, handle
         self._path: Path | None = None
+        self._encryption_key: bytes | None = None
 
     @classmethod
     def from_plist(cls, data: bytes, *, library: Library | None = None) -> StoreSession:
@@ -624,13 +645,30 @@ class StoreSession:
         return cls(library, handle)
 
     @classmethod
-    def load(cls, filename, *, library: Library | None = None) -> StoreSession:
+    def load(cls, filename, *, encryption_key=None, library: Library | None = None) -> StoreSession:
         library = library or Library()
+        if encryption_key is not None:
+            from .crypto import _read
+            result = cls.deserialize(_read(filename), encryption_key=encryption_key, library=library)
+            result._path = Path(filename).expanduser().resolve()
+            return result
         handle = c.c_void_p()
         library._check(library._native.aauth_store_session_load(_path(filename), c.byref(handle)))
         result = cls(library, handle)
         result._path = Path(filename).expanduser().resolve()
         return result
+
+    @classmethod
+    def deserialize(cls, data: bytes, *, encryption_key=None, library=None) -> StoreSession:
+        from .crypto import _decode, _key, _library
+        lib = _library(library)
+        result = cls.from_plist(_decode(data, encryption_key, lib), library=lib)
+        result._encryption_key = _key(encryption_key) if encryption_key is not None else None
+        return result
+
+    def serialize(self, *, encryption_key=None) -> bytes:
+        from .crypto import _encode
+        return _encode(self.plist(), encryption_key, self._library)
 
     def _require_open(self):
         if not self._handle:
@@ -673,10 +711,15 @@ class StoreSession:
         return json.loads(self._library._buffer(self._library._native.aauth_store_session_headers,
                                                self._handle, _utf8(url, "URL")))
 
-    def save(self, filename) -> Path:
+    def save(self, filename, *, encryption_key=None) -> Path:
         self._require_open()
-        self._library._check(self._library._native.aauth_store_session_save(self._handle, _path(filename)))
+        if encryption_key is not None:
+            from .crypto import _save
+            _save(filename, self.plist(), encryption_key, self._library)
+        else:
+            self._library._check(self._library._native.aauth_store_session_save(self._handle, _path(filename)))
         self._path = Path(filename).expanduser().resolve()
+        self._encryption_key = bytes(encryption_key) if encryption_key is not None else None
         return self._path
 
     def close(self):

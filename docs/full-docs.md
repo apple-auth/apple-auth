@@ -282,6 +282,68 @@ session to `mac-device/account-session.plist`. It accepts `--mac-model`,
 `--macos-version`, `--macos-build`, `--user-agent`, `--client-info` and repeatable
 `--header 'Name: value'` options. It has no Developer Services command.
 
+## Session serialization and optional encryption
+
+Encryption is opt-in. Existing plaintext `save()` / plist APIs retain their
+behavior. Session bytes can be kept in a database or any caller-managed storage;
+AES-256-GCM is available through the existing MbedTLS backend without new mandatory
+dependencies. The caller supplies a 32-byte random key and retains it separately.
+
+```python
+from apple_auth import Device, Session
+from apple_auth.crypto import generate_key, encrypt, decrypt
+
+key = generate_key()  # Retain in your application's secret storage.
+with Device.mac("encrypted-device", encryption_key=key) as device:
+    session = device.login(email=input("Apple ID: ").strip())
+    session.save("session.enc", encryption_key=key)
+    data = session.serialize(encryption_key=key)
+    restored = Session.deserialize(data, encryption_key=key)
+    loaded = Session.load("session.enc", encryption_key=key)
+    plaintext = session.serialize()
+    encrypted = encrypt(plaintext, key)
+    restored = Session.deserialize(decrypt(encrypted, key))
+
+with Device.open("encrypted-device", encryption_key=key) as device:
+    restored = device.session
+```
+
+| API | Storage parameters |
+| --- | --- |
+| Python `Device`, `AsyncDevice` | `encryption_key=None`; protects automatic account/Store saves and loads. Pass the same key when reopening. |
+| Python `Session` | `serialize(*, encryption_key=None, library=None)`, `deserialize(data, *, encryption_key=None, library=None)`, `load(filename, *, encryption_key=None, library=None)`, `save(filename, *, encryption_key=None, library=None)`. |
+| Python native `AccountSession`, `StoreSession` | `serialize(*, encryption_key=None)`, `deserialize(data, *, encryption_key=None, library=None)`, `load(filename, *, encryption_key=None, library=None)`, `save(filename, *, encryption_key=None)`. |
+| Python `TestFlightClient` | Same serialization/save key; `deserialize` and `load` retain all existing client options. Saves reject existing output files. |
+| Python crypto | `generate_key(*, library=None)`, `encrypt(data, key, *, library=None)`, `decrypt(data, key, *, library=None)`. |
+| Swift account/Store/Developer sessions | `serialize(encryptionKey: nil)`, `deserialize(data, encryptionKey: nil)`, `save(to: file, encryptionKey: nil)`, `load(from: file, encryptionKey: nil)`. Actual default values use `Data? = nil`. |
+| Swift `Device` / `Device.open` | `encryptionKey: Data? = nil` protects automatic account saves/loads. |
+| Swift TestFlight | Async serialization/load/save methods; `savedSession` initializer also accepts `encryptionKey`. |
+| Swift crypto | `SessionCrypto.generateKey()`, `encrypt(data, key: key)`, `decrypt(data, key: key)`. |
+| C++ sessions | `serialize(optional_key={})`, `deserialize(data, optional_key={})`, `save(path, key)`, `load(path, key)`; existing no-key overloads remain available. TestFlight load/deserialize also accept `transport={}`, `options={}`. |
+| C++ crypto | `<apple_auth/session_crypto.hpp>`: `generate_session_key()`, `encrypt_session(data, key)`, `decrypt_session(data, key)`. |
+| C core | `aauth_session_key_generate(key32, capacity)`, `aauth_session_encrypt(data, size, key, key_size, output, capacity, written)`, matching `aauth_session_decrypt`. |
+| C client | `aauth_client_generate_session_key(output)`, `aauth_client_encrypt_session(data, size, key, key_size, output)`, matching decrypt; `aauth_client_save_session(filename, data, size)` privately stores already-serialized bytes. |
+
+```swift
+let key = try SessionCrypto.generateKey()
+let encoded = try account.serialize(encryptionKey: key)
+let restored = try AccountSession.deserialize(encoded, encryptionKey: key)
+try account.save(to: sessionFile, encryptionKey: key)
+```
+
+Python Developer Session dictionaries can be JSON-encoded and passed to the crypto
+helpers directly. The C client also exposes `aauth_testflight_client_serialize` for
+saved TestFlight JSON; account/Store bytes use the existing plist functions.
+
+Wrong keys, damaged ciphertext and unsupported envelopes fail without a plaintext
+fallback. Explicit saves need an explicit key. Device persistence uses its configured
+key, and Python Store cookie updates preserve the saved session's key. Identity/ADI
+files retain their original formats. To migrate, load an existing plaintext session
+without a key, then save it with the key before reopening an encrypted device.
+
+See [session storage](session-storage.md) for complete C/C++ examples, key ownership,
+file behavior and the [shared encrypted format](formats.md#encrypted-session-envelope).
+
 ## Authentication and download workflows
 
 The App Store examples use the production TestFlight app (`899247664`) already
@@ -770,6 +832,7 @@ synthetic IDs and mock responses do not authenticate an account.
 | `client_info` | `None` | Device description for `X-MMe-Client-Info`; omit to use the preset. |
 | `headers` | `None` | String dictionary such as `{"Accept-Language": "pl-PL"}`; restrictions and precedence are described above. |
 | `library` | `None` | A shared `Library` instance or native library path for client constructors. `None` creates a library using discovery. Session `load`/`from_plist` accept a `Library` instance. |
+| `encryption_key` | `None` | Optional 32-byte storage key for `Device` / `AsyncDevice`; protects account and Store session files. Not passed to Apple or stored in device settings. |
 | `transport` | `None` | Synchronous `HttpRequest -> HttpResponse`; `None` uses built-in HTTPS. |
 | `clock` | `None` | Zero-argument callable returning integer Unix **seconds**, e.g. `lambda: int(time.time())`. |
 | `AsyncDevice.executor` | `None` | Caller-owned `ThreadPoolExecutor`; default uses the event loop's executor. Close the device before shutting down a supplied executor. |
@@ -885,8 +948,8 @@ async def configured_async_device():
 | `Device.store_request` | Required `url`; `method="GET"`, `body=b""`, `headers=None`, `session=None` uses saved Music session. | `device.store_request(url="account-flags", method="GET", body=b"", headers={}, session=music)` |
 | Native `Client.store_request` | Required native Store `session` and `HttpRequest`. | `native.store_request(music, HttpRequest("account-flags", "GET", {}, b""))` |
 | `AccountSession.from_plist`, `StoreSession.from_plist` | Required plist `data: bytes`; keyword `library=None`. | `StoreSession.from_plist(data=plist_bytes, library=library)` |
-| `AccountSession.load`, `StoreSession.load` | Required `filename`; keyword `library=None`. | `StoreSession.load(filename="ios-store.plist", library=library)` |
-| Session `save` | Required `filename`; persists current plist. | `store.save(filename="ios-store-copy.plist")` |
+| `AccountSession.load`, `StoreSession.load` | Required `filename`; keywords `library=None`, `encryption_key=None`. | `StoreSession.load(filename="ios-store.enc", encryption_key=key, library=library)` |
+| Session `save` | Required `filename`; `encryption_key=None` keeps plaintext, a 32-byte key encrypts it. | `store.save(filename="ios-store.enc", encryption_key=key)` |
 | `StoreSession.headers` | Required Apple Store HTTPS `url`; returns saved authentication/cookies without fresh anisette/SAP. | `store.headers(url="https://itunes.apple.com/")` |
 | `StoreSession.ios_context` | Required lowercase two-letter `country`. | `store.ios_context(country="pl")` |
 | `StoreSession.testflight_context` | Required raw `hardware20: bytes` and Mac `headers` dictionary. | `store.testflight_context(hardware20=hardware20, headers=mac_headers)` |
@@ -1033,6 +1096,7 @@ disables the optional expected-bundle match while retaining archive checks.
 | `transport` | `nil` | Async `HTTPTransport`; default private URLSession. |
 | `userAgent`, `clientInfo` | `nil` | Header shortcuts; empty strings use defaults. |
 | `headers` | `[:]` | String dictionary applied after shortcuts/defaults. |
+| `encryptionKey` | `nil` | Optional 32-byte `Data` storage key for automatic account saves/loads; also accepted by `Device.open`. |
 | `clock` | `{ Date() }` | `@Sendable () -> Date`; no Unix conversion in the Swift API. |
 
 The following function shows every initializer parameter without making requests:
@@ -1763,4 +1827,5 @@ certificate trust. No workflow supplies a FairPlay credential or content decrypt
 | [App Store](appstore.md) | iOS context, license and IPA behavior; macOS assets, dpInfo3 packages and validation limits |
 | [State and protocol formats](formats.md) | File schemas, ADI/OTP and signature structures |
 | [Source layout](source-layout.md) | Implementation modules and fixed-data conventions |
+| [Session storage](session-storage.md) | In-memory serialization, optional AES-256-GCM, key ownership and all language APIs |
 | [Examples](../examples/) | Runnable language and CLI source examples |

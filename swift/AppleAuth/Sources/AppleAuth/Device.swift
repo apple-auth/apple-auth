@@ -25,13 +25,16 @@ public final class Device: @unchecked Sendable {
     private let queue = DispatchQueue(label: "apple-auth.device")
     private let bridge: NativeBridge
     private var handle: OpaquePointer?
+    private let encryptionKey: Data?
 
     public init(directory: URL, platform: DevicePlatform = .mac,
                 model: String? = nil, macOSVersion: String? = nil, macOSBuild: String? = nil,
                 iOSVersion: String? = nil, iOSBuild: String? = nil,
                 serialNumber: String? = nil, transport: HTTPTransport? = nil,
                 userAgent: String? = nil, clientInfo: String? = nil, headers: [String: String] = [:],
+                encryptionKey: Data? = nil,
                 clock: @escaping @Sendable () -> Date = { Date() }) throws {
+        if let encryptionKey { try SessionCrypto.validate(encryptionKey) }
         guard directory.isFileURL else { throw AppleAuthError("Device state must use a local directory") }
         let directory = directory.standardizedFileURL
         let bridge = NativeBridge(transport: transport, clock: clock)
@@ -66,6 +69,7 @@ public final class Device: @unchecked Sendable {
             throw error
         }
         self.directory = directory
+        self.encryptionKey = encryptionKey
         self.bridge = bridge
         handle = native
     }
@@ -77,12 +81,14 @@ public final class Device: @unchecked Sendable {
 
     public static func open(directory: URL, transport: HTTPTransport? = nil,
                             userAgent: String? = nil, clientInfo: String? = nil, headers: [String: String] = [:],
+                            encryptionKey: Data? = nil,
                             clock: @escaping @Sendable () -> Date = { Date() }) throws -> Device {
         guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("identity.json").path) else {
             throw AppleAuthError("No saved device in this directory")
         }
         return try Device(directory: directory, platform: .automatic, transport: transport,
-                          userAgent: userAgent, clientInfo: clientInfo, headers: headers, clock: clock)
+                          userAgent: userAgent, clientInfo: clientInfo, headers: headers,
+                          encryptionKey: encryptionKey, clock: clock)
     }
 
     private func perform<Value: Sendable>(allowClosed: Bool = false,
@@ -148,8 +154,10 @@ public final class Device: @unchecked Sendable {
             guard let session else { throw AppleAuthError("Login returned no session") }
             defer { aauth_account_session_free(session) }
             try self.bridge.activeOperation().checkCancellation()
-            try checkClient(aauth_account_session_save(session, self.directory.appendingPathComponent("account-session.plist").path))
-            return try AccountSession(plist: clientData { aauth_account_session_plist(session, $0) })
+            let result = try AccountSession(plist: clientData { aauth_account_session_plist(session, $0) })
+            try result.save(to: self.directory.appendingPathComponent("account-session.plist"),
+                            encryptionKey: self.encryptionKey)
+            return result
         }
     }
 
@@ -157,7 +165,7 @@ public final class Device: @unchecked Sendable {
         try await perform {
             let file = self.directory.appendingPathComponent("account-session.plist")
             guard FileManager.default.fileExists(atPath: file.path) else { return nil }
-            return try AccountSession(plist: Data(contentsOf: file))
+            return try AccountSession.load(from: file, encryptionKey: self.encryptionKey)
         }
     }
 

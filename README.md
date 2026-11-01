@@ -40,6 +40,10 @@ Passwords and trusted-device 2FA codes are prompted when needed. Device state an
 sessions are saved automatically; `Device.open("my-macbook")` reopens them.
 `AsyncDevice` provides the same workflow with `async with` and `await`.
 
+Session encryption is optional: pass `encryption_key=key` to `Device` for encrypted
+automatic saves, or to session `save()` / `serialize()` methods. Swift uses
+`encryptionKey`. [Serialization and AES-256-GCM storage](docs/session-storage.md).
+
 > [!WARNING]
 > iPhone login uses Mac ADI and has been tested successfully with Apple's servers.
 > The iOS ADI implementation itself has not been investigated or compared with Mac ADI.

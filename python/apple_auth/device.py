@@ -30,9 +30,12 @@ class Device:
                  serial_number: str | None = None,
                  user_agent: str | None = None, client_info: str | None = None,
                  headers: dict[str, str] | None = None,
+                 encryption_key: bytes | None = None,
                  library: Library | str | os.PathLike | None = None,
                  transport: Callable[[HttpRequest], HttpResponse] | None = None,
                  clock: Callable[[], int] | None = None):
+        from .crypto import _key
+        self._encryption_key = _key(encryption_key) if encryption_key is not None else None
         self._state = (Path(state) if state is not None else _new_device_directory()).expanduser().resolve()
         self._library = library if isinstance(library, Library) else Library(library)
         metadata = (dict(iphone_model=model, ios_version=os_version, ios_build=os_build)
@@ -100,7 +103,7 @@ class Device:
         """Last saved session. Loading it does not check token expiry with Apple."""
         path = self.state / "account-session.plist"
         if self._session is None and path.is_file():
-            self._session = Session._decode(path.read_bytes(), path)
+            self._session = Session.load(path, encryption_key=self._encryption_key, library=self._library)
         return self._session
 
     def provision(self) -> Device:
@@ -112,7 +115,8 @@ class Device:
     def store_session(self) -> StoreSession | None:
         path = self.state / "store-account-session.plist"
         if (self._store_session is None or not self._store_session._handle) and path.is_file():
-            self._store_session = StoreSession.load(path, library=self._client._library)
+            self._store_session = StoreSession.load(path, encryption_key=self._encryption_key,
+                                                   library=self._client._library)
         return self._store_session
 
     def provision_store(self) -> Device:
@@ -132,7 +136,7 @@ class Device:
         try:
             session = self._client.login_store(email, password, two_factor)
             try:
-                session.save(self.state / "store-account-session.plist")
+                session.save(self.state / "store-account-session.plist", encryption_key=self._encryption_key)
             except BaseException:
                 session.close()
                 raise
@@ -150,7 +154,8 @@ class Device:
             raise RuntimeError("No Store session; use login_store() first")
         response = self._client.store_request(session, HttpRequest(url, method, headers or {}, body))
         if session._path is not None:
-            session.save(session._path)
+            key = session._encryption_key if session._encryption_key is not None else self._encryption_key
+            session.save(session._path, encryption_key=key)
         return response
 
     def login_store_with_pet(self, *, email: str, account: Session | None = None) -> StoreSession:
@@ -187,7 +192,7 @@ class Device:
             with self._client.login(email, password, two_factor) as native_session:
                 path = self.state / "account-session.plist"
                 session = Session._decode(native_session.plist(), path)
-                native_session.save(path)
+                native_session.save(path, encryption_key=self._encryption_key)
                 self._session = session
                 return session
         finally:

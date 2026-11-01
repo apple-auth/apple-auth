@@ -59,8 +59,12 @@ public struct AccountSession: Sendable, CustomStringConvertible {
         self.plist = plist
     }
 
-    public func save(to file: URL) throws {
+    public func save(to file: URL, encryptionKey: Data? = nil) throws {
         guard file.isFileURL, !file.path.contains("\0") else { throw AppleAuthError("Invalid session file path") }
+        if let encryptionKey {
+            try SessionCrypto.save(plist, to: file, key: encryptionKey)
+            return
+        }
         try withAccount(plist) { try checkClient(aauth_account_session_save($0, file.path)) }
     }
 }

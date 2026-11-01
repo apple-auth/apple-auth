@@ -40,6 +40,13 @@ typedef enum aauth_status {
 // Error text is thread-local, valid until the next API call on that thread.
 APPLE_AUTH_EXPORT const char* aauth_last_error(void);
 APPLE_AUTH_EXPORT const char* aauth_version(void);
+// Optional AES-256-GCM storage helpers. Keys are exactly 32 raw bytes.
+// Size query: output=NULL, capacity=0, written!=NULL. Failed decrypts never copy plaintext.
+APPLE_AUTH_EXPORT aauth_status aauth_session_key_generate(uint8_t* output, size_t capacity);
+APPLE_AUTH_EXPORT aauth_status aauth_session_encrypt(const uint8_t* data, size_t size,
+    const uint8_t* key, size_t key_size, uint8_t* output, size_t capacity, size_t* written);
+APPLE_AUTH_EXPORT aauth_status aauth_session_decrypt(const uint8_t* data, size_t size,
+    const uint8_t* key, size_t key_size, uint8_t* output, size_t capacity, size_t* written);
 APPLE_AUTH_EXPORT aauth_status aauth_local_hardware_id(uint8_t* output, size_t capacity);
 APPLE_AUTH_EXPORT aauth_status aauth_time_counter(int64_t unix_seconds, uint32_t* output);
 

@@ -230,3 +230,26 @@ when needed.
 
 Implementation: [SAP session](../src/sap/session.cpp) and
 [signature framing](../src/sap/signing.hpp).
+
+## Encrypted session envelope
+
+Optional storage encryption uses AES-256-GCM with a caller-owned 32-byte key.
+Account/Store plist bytes and Developer/TestFlight JSON bytes use the same envelope:
+
+| Offset | Size | Value |
+| --- | --- | --- |
+| 0 | 8 | ASCII `AAUTHENC` magic |
+| 8 | 1 | Format version, currently `1` |
+| 9 | 12 | Fresh random nonce |
+| 21 | N | Ciphertext, the same length as the serialized plaintext |
+| 21 + N | 16 | Authentication tag |
+
+The first 21 bytes are authenticated additional data. The minimum envelope is
+37 bytes, including for an empty plaintext. Decryption verifies the tag before
+returning any plaintext; a wrong key or altered nonce/ciphertext/tag fails.
+Unknown format versions and truncated headers are rejected.
+
+The envelope contains no key or plaintext account identifier. The application
+stores and supplies its own key; encryption does not derive it from Apple
+credentials or protocol state. Existing plaintext formats remain supported
+when encryption is not requested. See [storage APIs and examples](session-storage.md).

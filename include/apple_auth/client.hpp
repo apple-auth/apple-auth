@@ -2,6 +2,7 @@
 
 #include <apple_auth/client_export.h>
 #include <apple_auth/core.hpp>
+#include <apple_auth/session_crypto.hpp>
 
 #include <filesystem>
 #include <functional>
@@ -99,6 +100,11 @@ struct AccountSession {
     APPLE_AUTH_CLIENT_EXPORT static AccountSession from_plist(ByteView data);
     APPLE_AUTH_CLIENT_EXPORT static AccountSession load(const std::filesystem::path& file);
     APPLE_AUTH_CLIENT_EXPORT void save(const std::filesystem::path& file) const;
+    APPLE_AUTH_CLIENT_EXPORT Bytes serialize(std::optional<ByteView> encryption_key = {}) const;
+    APPLE_AUTH_CLIENT_EXPORT static AccountSession deserialize(ByteView data,
+        std::optional<ByteView> encryption_key = {});
+    APPLE_AUTH_CLIENT_EXPORT static AccountSession load(const std::filesystem::path& file, ByteView encryption_key);
+    APPLE_AUTH_CLIENT_EXPORT void save(const std::filesystem::path& file, ByteView encryption_key) const;
 };
 
 struct DeveloperSession {
@@ -106,6 +112,13 @@ struct DeveloperSession {
     std::string account_id;
     std::string token;
     std::int64_t expires_at_ms = 0;
+    APPLE_AUTH_CLIENT_EXPORT Bytes serialize(std::optional<ByteView> encryption_key = {}) const;
+    APPLE_AUTH_CLIENT_EXPORT static DeveloperSession deserialize(ByteView data,
+        std::optional<ByteView> encryption_key = {});
+    APPLE_AUTH_CLIENT_EXPORT static DeveloperSession load(const std::filesystem::path& file,
+        std::optional<ByteView> encryption_key = {});
+    APPLE_AUTH_CLIENT_EXPORT void save(const std::filesystem::path& file,
+        std::optional<ByteView> encryption_key = {}) const;
 };
 
 enum class StoreProtocol {
@@ -129,6 +142,11 @@ class StoreSession {
     APPLE_AUTH_CLIENT_EXPORT Headers headers(const std::string& url) const;
     APPLE_AUTH_CLIENT_EXPORT Bytes plist() const;
     APPLE_AUTH_CLIENT_EXPORT void save(const std::filesystem::path& file) const;
+    APPLE_AUTH_CLIENT_EXPORT Bytes serialize(std::optional<ByteView> encryption_key = {}) const;
+    APPLE_AUTH_CLIENT_EXPORT static StoreSession deserialize(ByteView data,
+        std::optional<ByteView> encryption_key = {});
+    APPLE_AUTH_CLIENT_EXPORT static StoreSession load(const std::filesystem::path& file, ByteView encryption_key);
+    APPLE_AUTH_CLIENT_EXPORT void save(const std::filesystem::path& file, ByteView encryption_key) const;
     // JSON contexts for AppStoreIosClient and TestFlightClient.
     APPLE_AUTH_CLIENT_EXPORT Bytes ios_context(const std::string& country) const;
     APPLE_AUTH_CLIENT_EXPORT Bytes testflight_context(ByteView hardware20,

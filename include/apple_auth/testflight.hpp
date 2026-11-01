@@ -47,6 +47,12 @@ class TestFlightClient {
     TestFlightClient(const TestFlightClient&) = delete;
     TestFlightClient& operator=(const TestFlightClient&) = delete;
     APPLE_AUTH_CLIENT_EXPORT void save(const std::filesystem::path& session_file) const;
+    APPLE_AUTH_CLIENT_EXPORT Bytes serialize(std::optional<ByteView> encryption_key = {}) const;
+    APPLE_AUTH_CLIENT_EXPORT static TestFlightClient deserialize(ByteView data,
+        std::optional<ByteView> encryption_key = {}, Transport transport = {}, TestFlightOptions options = {});
+    APPLE_AUTH_CLIENT_EXPORT static TestFlightClient load(const std::filesystem::path& session_file,
+        std::optional<ByteView> encryption_key = {}, Transport transport = {}, TestFlightOptions options = {});
+    APPLE_AUTH_CLIENT_EXPORT void save(const std::filesystem::path& session_file, ByteView encryption_key) const;
     APPLE_AUTH_CLIENT_EXPORT Bytes catalog();
     APPLE_AUTH_CLIENT_EXPORT Bytes install_metadata(const std::string& bundle);
     APPLE_AUTH_CLIENT_EXPORT void save_catalog(const std::filesystem::path& file);

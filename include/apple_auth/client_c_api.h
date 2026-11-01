@@ -221,6 +221,16 @@ APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_buffer_alloc(size_t size,
                                                                 aauth_client_buffer* output);
 APPLE_AUTH_CLIENT_EXPORT void aauth_client_buffer_free(aauth_client_buffer* buffer);
 
+// Optional storage helpers; buffers use aauth_client_buffer_free. No login or network.
+APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_generate_session_key(aauth_client_buffer* output);
+APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_encrypt_session(const uint8_t* data, size_t size,
+    const uint8_t* key, size_t key_size, aauth_client_buffer* output);
+APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_decrypt_session(const uint8_t* data, size_t size,
+    const uint8_t* key, size_t key_size, aauth_client_buffer* output);
+// Atomically store already-serialized bytes with the existing private-file permissions.
+APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_save_session(const char* filename,
+    const uint8_t* data, size_t size);
+
 typedef struct aauth_store_session aauth_store_session;
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_store_provision(aauth_client* client);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_client_store_headers(aauth_client* client,
@@ -303,6 +313,8 @@ APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_testflight_client_from_store_cookies
 APPLE_AUTH_CLIENT_EXPORT void aauth_testflight_client_free(aauth_testflight_client *client);
 APPLE_AUTH_CLIENT_EXPORT aauth_status
 aauth_testflight_client_save(const aauth_testflight_client *client, const char *path);
+APPLE_AUTH_CLIENT_EXPORT aauth_status
+aauth_testflight_client_serialize(const aauth_testflight_client *client, aauth_client_buffer *output);
 APPLE_AUTH_CLIENT_EXPORT aauth_status
 aauth_testflight_client_catalog(aauth_testflight_client *client, aauth_client_buffer *output);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_testflight_client_install_metadata(

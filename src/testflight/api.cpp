@@ -65,6 +65,29 @@ TestFlightClient::~TestFlightClient() = default;
 TestFlightClient::TestFlightClient(TestFlightClient&&) noexcept = default;
 TestFlightClient& TestFlightClient::operator=(TestFlightClient&&) noexcept = default;
 
+Bytes TestFlightClient::serialize(std::optional<ByteView> key) const {
+    netdetail::require(bool(impl_), "TestFlight client is closed");
+    const auto data = netdetail::bytes(impl_->context.dump(2));
+    return key ? encrypt_session(data, *key) : data;
+}
+
+TestFlightClient TestFlightClient::deserialize(ByteView data, std::optional<ByteView> key,
+                                              Transport transport, TestFlightOptions options) {
+    const auto clear = key ? decrypt_session(data, *key) : Bytes(data.begin(), data.end());
+    return TestFlightClient(clear, std::move(transport), std::move(options));
+}
+
+TestFlightClient TestFlightClient::load(const std::filesystem::path& file, std::optional<ByteView> key,
+                                       Transport transport, TestFlightOptions options) {
+    return deserialize(netdetail::read_file(file, (1u << 20) + session_encryption_overhead),
+                       key, std::move(transport), std::move(options));
+}
+
+void TestFlightClient::save(const std::filesystem::path& path, ByteView key) const {
+    netdetail::require(impl_ && !std::filesystem::exists(path), "TestFlight session output already exists");
+    netdetail::write_private(path, serialize(key));
+}
+
 void TestFlightClient::save(const std::filesystem::path& path) const {
     netdetail::require(impl_ && !std::filesystem::exists(path),
                        "TestFlight session output already exists");

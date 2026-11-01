@@ -168,8 +168,19 @@ class TestFlightClient(_StoreOwner):
         self._create(function, data, size, c.byref(self._options), json.dumps(options).encode("utf-8"))
 
     @classmethod
-    def load(cls, filename, **options):
-        return cls(Path(filename).read_bytes(), **options)
+    def load(cls, filename, *, encryption_key=None, **options):
+        from .crypto import _read
+        return cls.deserialize(_read(filename), encryption_key=encryption_key, **options)
+
+    @classmethod
+    def deserialize(cls, data, *, encryption_key=None, **options):
+        from .crypto import _decode, _library
+        library = _library(options.pop("library", None))
+        return cls(_decode(data, encryption_key, library), library=library, **options)
+
+    def serialize(self, *, encryption_key=None):
+        from .crypto import _encode
+        return _encode(self._bytes("aauth_testflight_client_serialize"), encryption_key, self._library)
 
     @classmethod
     def from_store_cookies(cls, context, **options):
@@ -180,8 +191,12 @@ class TestFlightClient(_StoreOwner):
         options.setdefault("library", session._library)
         return cls.from_store_cookies(session.testflight_context(hardware20, mac_headers), **options)
 
-    def save(self, filename):
+    def save(self, filename, *, encryption_key=None):
         self._prepare()
+        if encryption_key is not None:
+            from .crypto import _save
+            _save(filename, self.serialize(), encryption_key, self._library, overwrite=False)
+            return
         self._check(self._library._function("aauth_testflight_client_save")(self._handle, _path(filename)))
 
     def catalog(self):

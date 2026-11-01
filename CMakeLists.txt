@@ -42,6 +42,7 @@ add_library(apple_auth
     src/adi/provisioning/seed.cpp
     src/api/c_api.cpp
     src/crypto/crypto.cpp
+    src/crypto/session.cpp
     src/crypto/srp.cpp
     src/sap/session.cpp
     src/sap/certificate.cpp)
@@ -130,6 +131,7 @@ if(APPLE_AUTH_WITH_CLIENT)
         src/api/client_api.cpp
         src/client/client.cpp
         src/client/client_support.cpp
+        src/client/session_storage.cpp
         ${apple_auth_transport}
         ${apple_auth_plist_source}
         src/client/authentication.cpp

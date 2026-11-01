@@ -46,11 +46,11 @@ class Session:
 
     account_id: str
     pet: str = field(repr=False)
-    path: Path
+    path: Path | None
     _data: bytes = field(repr=False)
 
     @classmethod
-    def _decode(cls, data: bytes, path: Path) -> Session:
+    def _decode(cls, data: bytes, path: Path | None) -> Session:
         fields = plistlib.loads(data)
         try:
             account_id = fields["adsid"]
@@ -65,8 +65,27 @@ class Session:
         """Return the original binary/XML plist when an integration needs it."""
         return self._data
 
-    def save(self, filename: str | os.PathLike) -> Path:
+    def serialize(self, *, encryption_key=None, library=None) -> bytes:
+        """Return session bytes for any storage backend; encryption is opt-in."""
+        from .crypto import _encode
+        return _encode(self._data, encryption_key, library)
+
+    @classmethod
+    def deserialize(cls, data: bytes, *, encryption_key=None, library=None) -> Session:
+        from .crypto import _decode
+        return cls._decode(_decode(data, encryption_key, library), None)
+
+    @classmethod
+    def load(cls, filename: str | os.PathLike, *, encryption_key=None, library=None) -> Session:
+        from .crypto import _decode, _read
+        path = Path(filename).expanduser().resolve()
+        return cls._decode(_decode(_read(path), encryption_key, library), path)
+
+    def save(self, filename: str | os.PathLike, *, encryption_key=None, library=None) -> Path:
         """Save a copy; login already saves the session in the device directory."""
+        if encryption_key is not None:
+            from .crypto import _save
+            return _save(filename, self._data, encryption_key, library)
         path = Path(filename).expanduser().resolve()
         path.parent.mkdir(parents=True, exist_ok=True)
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

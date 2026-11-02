@@ -14,15 +14,22 @@ concurrency:
 
 jobs:
   linux:
+    name: Linux (shared=${{ matrix.shared }}, downloads=${{ matrix.downloads }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       matrix:
-        shared: ["ON", "OFF"]
+        include:
+          - shared: "ON"
+            downloads: "OFF"
+          - shared: "OFF"
+            downloads: "OFF"
+          - shared: "ON"
+            downloads: "ON"
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y ninja-build libmbedtls-dev libcurl4-gnutls-dev libplist-dev nlohmann-json3-dev
-      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=${{ matrix.shared }}
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build libmbedtls-dev libcurl4-gnutls-dev libplist-dev nlohmann-json3-dev libzip-dev zlib1g-dev
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DAPPLE_AUTH_WITH_TESTFLIGHT=${{ matrix.downloads }}
       - run: cmake --build build --parallel 4
       - run: python -m pip wheel . --no-deps --wheel-dir dist
   windows:

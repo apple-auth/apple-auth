@@ -182,7 +182,7 @@ and CMake install layouts are detected automatically. Otherwise set
 
 ### Swift and iOS/iPadOS
 
-The [release archive](https://github.com/yummy1gay/apple-auth/releases/latest)
+The [release archive](https://github.com/apple-auth/apple-auth/releases/latest)
 contains `AppleAuth.zip`: extract it and add the enclosed `AppleAuth` directory
 as a local Swift package in Xcode. It includes native libraries and dependencies.
 To produce the package yourself, use a Mac with full Xcode, Python 3.10+, CMake

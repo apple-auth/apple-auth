@@ -73,7 +73,7 @@ links all iOS slices, checks Swift imports, and uploads the XCFramework.
 
 ## Swift
 
-The [latest release](https://github.com/yummy1gay/apple-auth/releases/latest)
+The [latest release](https://github.com/apple-auth/apple-auth/releases/latest)
 contains `AppleAuth.zip`. Download it, extract it, and choose
 **File → Add Package Dependencies → Add Local** in Xcode. Select the `AppleAuth`
 directory. The package includes its native libraries and dependencies.

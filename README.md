@@ -60,7 +60,7 @@ See [device presets and ADI backends](docs/usage.md#platforms) for platform deta
 
 ## Swift
 
-Download `AppleAuth.zip` from the [latest release](https://github.com/yummy1gay/apple-auth/releases/latest),
+Download `AppleAuth.zip` from the [latest release](https://github.com/apple-auth/apple-auth/releases/latest),
 extract it and add the enclosed directory as a **local Swift package** in Xcode.
 The package includes its native libraries; no CMake or dependency installation is needed.
 

@@ -7,7 +7,7 @@ from .store import (StoreClient, TestFlightClient, AppStoreIosClient, AppStoreMa
                     STORE_PROTOCOLS, generate_kbsync, unwrap_testflight_transport,
                     normalize_testflight_ipa, unwrap_appstore_mac_package)
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __all__ = [
     "AccountSession", "AsyncDevice", "Client", "DEVICE_PLATFORMS", "Device", "DeviceInfo",
     "HttpRequest", "HttpResponse", "HttpTiming", "Library", "NativeError", "Session",

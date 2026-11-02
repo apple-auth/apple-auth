@@ -72,16 +72,28 @@ hardware6 kbSync. The client checks the returned account, app, bundle, version
 and platform before fetching a CDN URL. The CDN receives no Store headers.
 Size and MD5 are checked against Store metadata; every IPA member is read for
 CRC validation, and the main Info.plist must declare iPhoneOS. Existing outputs
-are rejected. The original CDN bytes are published after validation.
+are rejected. Apple-provided SINF records are inserted by default, using the
+package manifest or the main executable's `.sinf` path for a single record
+without a manifest. The resulting IPA remains FairPlay encrypted.
 
 The download metadata, SINF/receipt material and original encrypted IPA remain
-in a private directory next to the output. The client does not inject SINF,
-decrypt FairPlay, install or run the app. Some Store metadata contains account
+in a private directory next to the output. Set Python `download(...,
+include_sinf=False)`, Swift `includeSinf: false`, the third C++ `download()`
+argument to `false`, or CLI `download ... --no-sinf` to publish the original
+validated CDN bytes instead. The C function is
+`aauth_appstore_ios_client_download_ipa(..., include_sinf, &output)` (`1` include,
+`0` skip). Missing SINF records are a no-op; malformed supplied records or unsafe
+manifest paths fail without publishing output. `bytes` reports CDN bytes;
+`sha256` and `members` describe the resulting IPA.
+The client does not decrypt FairPlay, install or run the app. Some Store metadata contains account
 identifiers and signed URLs; keep it private.
 
 For content decryption, use
 [fairplay-decrypt](https://github.com/EthanArbuckle/fairplay-decrypt) with a
-`credential.bin` from the **same Apple ID used to download the IPA**.
+`credential.bin` matching the SINF's **`user` + `key`** selectors. A credential
+retrieved for a TestFlight license can differ from the App Store credential even
+for the same Apple ID. Use the target App Store IPA/SINF when retrieving it;
+see the full guide for selector-based retrieval and cross-app reuse.
 See the [decryption example](full-docs.md#decrypting-downloaded-ipas).
 
 The catalog/download client does not log in, obtain PET, request 2FA or acquire

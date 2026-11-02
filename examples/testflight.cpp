@@ -114,7 +114,7 @@ int main(int argc, char** argv) {
                          "--tf-session-from-cookies CONTEXT --output SESSION\n"
                          "--tf-catalog --tf-session SESSION --output CATALOG\n"
                          "--tf-install BUNDLE --tf-session SESSION --output METADATA\n"
-                         "--tf-download BUNDLE --tf-session SESSION --output IPA\n"
+                         "--tf-download BUNDLE --tf-session SESSION --output IPA [--no-sinf]\n"
                          "--unwrap-transport INPUT --material IDENTITY --install-metadata METADATA "
                          "--output APPLEZIP\n"
                          "--normalize-ipa APPLEZIP --output IPA\n"
@@ -123,13 +123,17 @@ int main(int argc, char** argv) {
         }
         std::map<std::string, std::string> options;
         std::string mode, argument;
+        bool include_sinf = true;
         for (int i = 1; i < argc; ++i) {
             const std::string key = argv[i];
             const bool operation = key == "--tf-session-from-cookies" || key == "--tf-catalog" ||
                                    key == "--tf-install" || key == "--tf-download" ||
                                    key == "--unwrap-transport" || key == "--normalize-ipa" ||
                                    key == "--kbsync";
-            if (operation) {
+            if (key == "--no-sinf") {
+                require(include_sinf, "Duplicate --no-sinf option");
+                include_sinf = false;
+            } else if (operation) {
                 require(mode.empty(), "Choose one operation");
                 mode = key;
                 if (key != "--tf-catalog" && key != "--kbsync") {
@@ -146,6 +150,7 @@ int main(int argc, char** argv) {
         }
         require(!mode.empty() && options.contains("--output"),
                 "Operation and --output are required");
+        require(include_sinf || mode == "--tf-download", "--no-sinf requires --tf-download");
         const Path output = options.at("--output");
         require(!std::filesystem::exists(output), "Output already exists");
         if (mode == "--tf-session-from-cookies") {
@@ -185,7 +190,7 @@ int main(int argc, char** argv) {
             } else if (mode == "--tf-install") {
                 client.save_install_metadata(argument, output);
             } else {
-                (void)client.download(argument, output);
+                (void)client.download(argument, output, include_sinf);
             }
         }
         std::cout << "Completed. Result saved privately.\n";

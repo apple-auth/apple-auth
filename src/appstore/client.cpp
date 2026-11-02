@@ -393,7 +393,8 @@ Bytes AppStoreIosClient::acquire_free(std::uint64_t app_id) {
     return response.body;
 }
 
-AppStoreIosDownload AppStoreIosClient::download(std::uint64_t app_id, const Path& destination) {
+AppStoreIosDownload AppStoreIosClient::download(std::uint64_t app_id, const Path& destination,
+                                                bool include_sinf) {
     require(bool(impl_) && !destination.empty() && !std::filesystem::exists(destination),
             "App Store output already exists or is invalid");
     const auto [selected, metadata] = impl_->metadata(app_id);
@@ -413,14 +414,23 @@ AppStoreIosDownload AppStoreIosClient::download(std::uint64_t app_id, const Path
     require(file_digest(source, MBEDTLS_MD_MD5) == item.at("md5").get<std::string>(),
             "IPA digest differs from Store metadata");
     validate_ipa(source, result);
-    result.sha256 = file_digest(source, MBEDTLS_MD_SHA256);
     for (const auto& value :
          item.at("metadata").value("softwareVersionExternalIdentifiers", Json::array())) {
         const auto id = scalar(value);
         require(decimal(id), "Invalid App Store version history identifier");
         result.version_ids.push_back(id);
     }
-    std::filesystem::create_hard_link(source, destination);
+    const auto sinfs = include_sinf
+                           ? archivedetail::sinf_records(item.value("sinfs", Json()))
+                           : std::vector<Bytes>{};
+    const auto personalized = result.material_directory / "with-sinf.ipa";
+    if (!sinfs.empty()) {
+        const auto archive = archivedetail::normalize_ipa(source, personalized, selected.bundle, sinfs);
+        result.members = archive.members;
+    }
+    const auto& output = sinfs.empty() ? source : personalized;
+    result.sha256 = file_digest(output, MBEDTLS_MD_SHA256);
+    std::filesystem::create_hard_link(output, destination);
     return result;
 }
 

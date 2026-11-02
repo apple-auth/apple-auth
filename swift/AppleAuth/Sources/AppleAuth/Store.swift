@@ -356,10 +356,10 @@ public final class TestFlightClient: Sendable {
             try clientData { aauth_testflight_client_install_metadata(handle, bundle, $0) }
         }
     }
-    public func download(bundle: String, to file: URL) async throws -> TestFlightDownload {
+    public func download(bundle: String, to file: URL, includeSinf: Bool = true) async throws -> TestFlightDownload {
         let bundle = try checkedString(bundle), path = try localPath(file)
         return try await runner.perform { handle, _ in
-            try decodeStore(TestFlightDownload.self, clientData { aauth_testflight_client_download(handle, bundle, path, $0) })
+            try decodeStore(TestFlightDownload.self, clientData { aauth_testflight_client_download_ipa(handle, bundle, path, includeSinf ? 1 : 0, $0) })
         }
     }
 }
@@ -397,10 +397,10 @@ public final class AppStoreIosClient: Sendable {
     public func acquireFree(appID: UInt64) async throws -> Data {
         try await runner.perform { handle, _ in try clientData { aauth_appstore_ios_client_acquire_free(handle, appID, $0) } }
     }
-    public func download(appID: UInt64, to file: URL) async throws -> AppStoreDownload {
+    public func download(appID: UInt64, to file: URL, includeSinf: Bool = true) async throws -> AppStoreDownload {
         let path = try localPath(file)
         return try await runner.perform { handle, _ in
-            try decodeStore(AppStoreDownload.self, clientData { aauth_appstore_ios_client_download(handle, appID, path, $0) })
+            try decodeStore(AppStoreDownload.self, clientData { aauth_appstore_ios_client_download_ipa(handle, appID, path, includeSinf ? 1 : 0, $0) })
         }
     }
 }

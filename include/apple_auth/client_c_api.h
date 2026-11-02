@@ -274,8 +274,9 @@ aauth_testflight_client_catalog(aauth_testflight_client *client, aauth_client_bu
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_testflight_client_install_metadata(
     aauth_testflight_client *client, const char *bundle, aauth_client_buffer *output);
 APPLE_AUTH_CLIENT_EXPORT aauth_status
-aauth_testflight_client_download(aauth_testflight_client *client, const char *bundle,
-                                 const char *path, aauth_client_buffer *output);
+// include_sinf: 1 copies Apple-provided SINF records; 0 leaves the IPA unpersonalized.
+aauth_testflight_client_download_ipa(aauth_testflight_client *client, const char *bundle,
+                                 const char *path, int include_sinf, aauth_client_buffer *output);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_appstore_ios_client_create(
     const uint8_t *context_json, size_t size, const aauth_client_options *transport,
     const char *headers_json, aauth_appstore_ios_client **output);
@@ -289,8 +290,8 @@ APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_appstore_ios_client_offer(
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_appstore_ios_client_acquire_free(
     aauth_appstore_ios_client *client, uint64_t app_id, aauth_client_buffer *output);
 APPLE_AUTH_CLIENT_EXPORT aauth_status
-aauth_appstore_ios_client_download(aauth_appstore_ios_client *client, uint64_t app_id,
-                                   const char *path, aauth_client_buffer *output);
+aauth_appstore_ios_client_download_ipa(aauth_appstore_ios_client *client, uint64_t app_id,
+                                   const char *path, int include_sinf, aauth_client_buffer *output);
 APPLE_AUTH_CLIENT_EXPORT aauth_status aauth_appstore_mac_client_create(
     const aauth_store_session *session, const char *store_directory, const char *country,
     const aauth_client_options *options, const aauth_device_headers *headers,

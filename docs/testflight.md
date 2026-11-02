@@ -54,15 +54,33 @@ Downloads select an available iOS build from the catalog, generate a fresh
 kbSync212, request install metadata, stream the CDN file, derive transport
 parameters from hardware20/dpInfo88, and normalize Apple ZIP into ordinary Deflate.
 The CDN receives the signed URL without TestFlight authentication headers or cookies.
-Intermediate files are retained beside the requested output in a separate directory.
-Existing outputs are rejected; the IPA is published after ZIP validation.
+Apple-provided SINF records are added to `SC_Info` by default, following the
+package's `SC_Info/Manifest.plist`. A single record without a manifest uses the
+main executable's `.sinf` path. `META-INF/com.apple.ZipMetadata.plist` is Apple's
+archive metadata (record count, file/directory permissions, uncompressed size
+and creator-tool details); it is retained from the source package.
+Intermediate files are retained beside the
+requested output in a separate directory. Existing outputs are rejected; the
+IPA is published after ZIP validation and SINF path/count checks.
 
-FairPlay content encryption remains in the IPA. Transport removal does not decrypt
-Mach-O content, personalize SINF, install the application or provide a FairPlay credential.
+FairPlay content encryption remains in the IPA. Adding Apple's SINF records does
+not decrypt Mach-O content or provide a FairPlay credential.
+
+Set `include_sinf=False` on Python `download()`, `includeSinf: false` in Swift,
+or the third `download()` argument to `false` in C++ to skip SINF insertion.
+The CLI accepts `--tf-download ... --no-sinf`. The C function
+`aauth_testflight_client_download_ipa(..., include_sinf, &output)` takes `1` to
+include Apple's records or `0` to skip them. Missing records are a no-op;
+malformed supplied records or manifest mappings fail without publishing an IPA.
 
 The downloaded IPA can be decrypted with
 [fairplay-decrypt](https://github.com/EthanArbuckle/fairplay-decrypt), using a
-`credential.bin` from the **same Apple ID used to download the IPA**.
+`credential.bin` matching the target SINF's **`user` + `key`** selectors. The same
+Apple ID alone does not guarantee the same credential: App Store and TestFlight
+licenses can use different selectors. Retrieve the credential using the target
+TestFlight IPA/SINF, rather than accepting an automatically selected App Store
+license. Credentials can work across apps sharing the selectors; do not assume
+that there are universally exactly two credentials.
 See the [decryption example](full-docs.md#decrypting-downloaded-ipas).
 
 Fresh Store sign-in with the independent macOS SAP signer was accepted in a C++

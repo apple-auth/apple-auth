@@ -835,12 +835,13 @@ aauth_status aauth_testflight_client_install_metadata(aauth_testflight_client *c
     });
 }
 
-aauth_status aauth_testflight_client_download(aauth_testflight_client *client, const char *bundle,
-                                              const char *path, aauth_client_buffer *output) {
+aauth_status aauth_testflight_client_download_ipa(aauth_testflight_client *client, const char *bundle,
+                                              const char *path, int include_sinf,
+                                              aauth_client_buffer *output) {
     return guard([&] {
 #ifdef APPLE_AUTH_WITH_TESTFLIGHT
-        require(client && bundle && output);
-        const auto result = client->value.download(bundle, utf8_path(path));
+        require(client && bundle && output && (include_sinf == 0 || include_sinf == 1));
+        const auto result = client->value.download(bundle, utf8_path(path), include_sinf != 0);
         write_json({{"archive", archive_info(result.archive)},
                     {"downloaded_bytes", result.downloaded_bytes},
                     {"artifacts", path_string(result.artifacts)}},
@@ -849,6 +850,7 @@ aauth_status aauth_testflight_client_download(aauth_testflight_client *client, c
         (void)client;
         (void)bundle;
         (void)path;
+        (void)include_sinf;
         (void)output;
         throw apple_auth::Error(ErrorCode::unsupported,
                                 "Rebuild with APPLE_AUTH_WITH_TESTFLIGHT=ON");
@@ -927,12 +929,13 @@ aauth_status aauth_appstore_ios_client_acquire_free(aauth_appstore_ios_client *c
     });
 }
 
-aauth_status aauth_appstore_ios_client_download(aauth_appstore_ios_client *client, uint64_t app_id,
-                                                const char *path, aauth_client_buffer *output) {
+aauth_status aauth_appstore_ios_client_download_ipa(aauth_appstore_ios_client *client, uint64_t app_id,
+                                                const char *path, int include_sinf,
+                                                aauth_client_buffer *output) {
     return guard([&] {
 #ifdef APPLE_AUTH_WITH_TESTFLIGHT
-        require(client && app_id && output);
-        const auto r = client->value.download(app_id, utf8_path(path));
+        require(client && app_id && output && (include_sinf == 0 || include_sinf == 1));
+        const auto r = client->value.download(app_id, utf8_path(path), include_sinf != 0);
         write_json({{"offer",
                      {{"app_id", r.offer.app_id},
                       {"bundle", r.offer.bundle},
@@ -950,6 +953,7 @@ aauth_status aauth_appstore_ios_client_download(aauth_appstore_ios_client *clien
         (void)client;
         (void)app_id;
         (void)path;
+        (void)include_sinf;
         (void)output;
         throw apple_auth::Error(ErrorCode::unsupported,
                                 "Rebuild with APPLE_AUTH_WITH_TESTFLIGHT=ON");

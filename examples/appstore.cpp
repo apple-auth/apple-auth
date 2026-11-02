@@ -6,7 +6,7 @@
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--help") {
         std::cout << "apple-auth-appstore CONTEXT.json catalog|metadata|download|acquire-free "
-                     "APP_ID OUTPUT\n"
+                     "APP_ID OUTPUT [--no-sinf]\n"
                      "apple-auth-appstore --mac STORE_DIR SESSION.plist COUNTRY "
                      "catalog|metadata|download|package APP_ID OUTPUT\n"
                      "Mac package saves a validated .pkg; download preserves the original asset.\n"
@@ -14,8 +14,9 @@ int main(int argc, char** argv) {
                      "zero-price license.\n";
         return 0;
     }
+    const bool include_sinf = !(argc == 6 && std::string(argv[5]) == "--no-sinf");
     const bool mac = argc == 8 && std::string(argv[1]) == "--mac";
-    if (!mac && argc != 5) {
+    if (!mac && argc != 5 && !(argc == 6 && !include_sinf)) {
         return 2;
     }
     try {
@@ -42,6 +43,9 @@ int main(int argc, char** argv) {
             return 2;
         }
         const std::string operation = argv[mac ? 5 : 2];
+        if (!include_sinf && operation != "download") {
+            return 2;
+        }
         if (operation == "download" || (mac && operation == "package")) {
             if (mac) {
                 const auto result = operation == "package"
@@ -53,7 +57,7 @@ int main(int argc, char** argv) {
                                   ? "Original Mac Store asset saved; transport wrapping remains.\n"
                                   : "Original Mac Store asset saved.\n");
             } else {
-                (void)ios_client->download(id, output);
+                (void)ios_client->download(id, output, include_sinf);
             }
         } else {
             if (operation != "catalog" && operation != "metadata" && operation != "acquire-free") {

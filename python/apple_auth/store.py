@@ -205,8 +205,11 @@ class TestFlightClient(_StoreOwner):
     def install_metadata(self, bundle):
         return self._bytes("aauth_testflight_client_install_metadata", _utf8(bundle, "Bundle ID"))
 
-    def download(self, bundle, destination):
-        return json.loads(self._bytes("aauth_testflight_client_download", _utf8(bundle, "Bundle ID"), _path(destination)))
+    def download(self, bundle, destination, *, include_sinf=True):
+        if type(include_sinf) is not bool:
+            raise TypeError("include_sinf must be a bool")
+        return json.loads(self._bytes("aauth_testflight_client_download_ipa", _utf8(bundle, "Bundle ID"),
+                                     _path(destination), int(include_sinf)))
 
 
 class AppStoreIosClient(_StoreOwner):
@@ -238,8 +241,11 @@ class AppStoreIosClient(_StoreOwner):
     def acquire_free(self, app_id):
         return self._bytes("aauth_appstore_ios_client_acquire_free", _app_id(app_id))
 
-    def download(self, app_id, destination):
-        return json.loads(self._bytes("aauth_appstore_ios_client_download", _app_id(app_id), _path(destination)))
+    def download(self, app_id, destination, *, include_sinf=True):
+        if type(include_sinf) is not bool:
+            raise TypeError("include_sinf must be a bool")
+        return json.loads(self._bytes("aauth_appstore_ios_client_download_ipa", _app_id(app_id),
+                                     _path(destination), int(include_sinf)))
 
 
 class AppStoreMacClient(_StoreOwner):

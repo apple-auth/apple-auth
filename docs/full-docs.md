@@ -539,8 +539,13 @@ provide the same operations as the CLI.
 The download path creates fresh hardware20 kbSync, fetches install metadata,
 streams the CDN file, removes its transport layer and normalizes Apple ZIP to
 ordinary Deflate. Every member is validated before IPA publication. Intermediate
-files are kept in a separate directory beside the output. FairPlay-encrypted
-Mach-O content stays encrypted; SINF is not personalized or installed.
+files are kept in a separate directory beside the output. Apple-provided SINF
+records are inserted by default, using `SC_Info/Manifest.plist`; a single record
+without a manifest uses the main executable's `.sinf` path. Mach-O content stays
+FairPlay encrypted. Use CLI `--no-sinf` or `download(..., include_sinf=False)` in
+Python to skip insertion; the native C++ argument is `include_sinf=false` and
+Swift uses `includeSinf: false`. Missing records are a no-op. Malformed supplied
+records, count mismatches, duplicate or unsafe paths fail without publishing output.
 
 Offline CLI operations are also available for saved material:
 
@@ -593,15 +598,44 @@ country)`. The download client also accepts exported JSON. Its methods are
 
 Download metadata must match the account, app, bundle, version offer and iOS
 platform. Store size/MD5, ZIP member CRCs and the main iPhoneOS Info.plist are
-checked before the original encrypted IPA is published. Metadata, original
-IPA and SINF/receipt material are retained beside the output. The SDK does
-not inject SINF, personalize receipts or decrypt the app.
+checked before publication. Apple-provided SINF records are added by default;
+`include_sinf=False` (Python), `includeSinf: false` (Swift), the third C++
+`download()` argument `false`, or CLI `download ... --no-sinf` preserves the
+original CDN bytes. Metadata, the original IPA and SINF/receipt material are
+retained beside the output. `bytes` is the CDN transfer size; `sha256` and
+`members` describe the published IPA. The SDK does not personalize receipts or
+decrypt the app.
 
 ### Decrypting downloaded IPAs
 
 Downloaded iOS App Store and TestFlight IPAs can be decrypted with
 [fairplay-decrypt](https://github.com/EthanArbuckle/fairplay-decrypt).
-The `credential.bin` must come from the **same Apple ID used to download the IPA**.
+Use a 16-byte `credential.bin` matching the target SINF's **`user` + `key`**
+selectors. The same Apple ID is not sufficient to guarantee a matching
+credential: App Store and TestFlight licenses can use different selector pairs.
+
+For a TestFlight download, retrieve using that TestFlight IPA/SINF; for an App
+Store download, use its App Store IPA/SINF. The retriever's default first
+supported installed app may select another license group. On the supported
+jailbroken device, select the target license explicitly (run from the
+`fairplay-decrypt` checkout, after its setup):
+
+```sh
+python credential-retrieval/retrieve.py --ipa /path/to/target-encrypted.ipa \
+  --output-dir /path/to/new-credential-directory
+```
+
+The IPA must contain its SINF, which the SDK now inserts by default. Upstream
+also accepts `--sinf /path/to/license.sinf`; use `--sinf-member` when one IPA
+contains distinct selectors. An installed app with a supported matching license
+is still required; a credential cannot be recovered from the IPA alone.
+
+Credentials are not necessarily app-specific. Live controls confirmed cross-app
+reuse for matching selectors, different credentials in the same account, and
+matching selectors across an App Store and TestFlight download. Distribution
+channel alone does not identify the credential, and those controls do not
+establish a universal number of credentials. Compare `user` + `key` selectors
+and choose the matching retrieval source.
 
 Follow the upstream setup instructions, then run from the `fairplay-decrypt` directory:
 
@@ -1219,10 +1253,10 @@ transport=None, headers={}, device_model=None, device_name=None)`.
 | Signed standalone Store request | `store.request(session=music, url="account-flags", method="GET", body=b"", headers={})`; `session` must match this Store client's identity and protocol. |
 | Standalone PET login | `store.login_with_pet(email=email, account=account, device=device)`; no PET refresh. |
 | TF metadata | `tf.install_metadata(bundle="com.example.notes")`; use an available beta bundle. |
-| TF download | `tf.download(bundle="com.example.notes", destination="Notes-beta.ipa")` |
+| TF download | `tf.download(bundle="com.example.notes", destination="Notes-beta.ipa", include_sinf=True)`; set `False` to omit Apple SINF. |
 | iOS/Mac catalog, offer, metadata | `ios.catalog(app_id=899247664)`, `ios.offer(app_id=899247664)`, `ios.metadata(app_id=899247664)`; same argument on `mac`. |
 | Explicit iOS acquisition | `ios.acquire_free(app_id=899247664)`; one zero-price request, only when explicitly wanted. |
-| iOS/Mac original download | `ios.download(app_id=899247664, destination="TestFlight.ipa")`; Mac uses an asset destination. |
+| iOS download / Mac original asset | `ios.download(app_id=899247664, destination="TestFlight.ipa", include_sinf=True)`; `False` preserves CDN bytes. Mac `download(app_id, destination)` preserves its original asset. |
 | Mac package | `mac.download_package(app_id=899247664, destination="TestFlight-Mac.pkg")` |
 | Persistence | `tf.save(filename="tf-copy.json")`; `filename` is a new output path. |
 
@@ -1404,11 +1438,11 @@ one TF factory. The iOS session overload is
 | Store login | `try await store.login(email: email, password: password, verification: Verification(code: requestCode))` |
 | Signed request | `try await store.request(session: session, request: request)`; `request` is `URLRequest` with URL, `httpMethod`, `allHTTPHeaderFields` and optional `httpBody`; retain the returned updated `session`. |
 | TF query | `try await tf.installMetadata(bundle: "com.example.notes")` |
-| TF download | `try await tf.download(bundle: "com.example.notes", to: outputURL)` |
+| TF download | `try await tf.download(bundle: "com.example.notes", to: outputURL, includeSinf: true)`; pass `false` to omit SINF. |
 | TF persistence | `try await tf.save(to: sessionURL)` |
 | iOS/Mac queries | `try await ios.catalog(appID: 899247664)`, `offer(appID:)`, `metadata(appID:)`; same `appID` on Mac. |
 | Explicit free acquisition | `try await ios.acquireFree(appID: 899247664)` |
-| iOS/Mac original download | `try await ios.download(appID: 899247664, to: outputURL)`; same arguments on Mac. |
+| iOS download / Mac original asset | `try await ios.download(appID: 899247664, to: outputURL, includeSinf: true)`; pass `false` for original CDN bytes. Mac has no SINF flag. |
 | Mac package | `try await mac.downloadPackage(appID: 899247664, to: outputURL)` |
 | Offline kbSync | `try StoreSupport.generateKBSync(dsid: dsid, hardware: hardware20, entropy: Data())` |
 | TF transport | `try StoreSupport.unwrapTestFlight(source: inputURL, destination: outputURL, hardware20: hardware20, dpInfo88: tfDpInfo88)` |
@@ -1509,10 +1543,10 @@ apple_auth::AccountSession verified_login(apple_auth::Client& client,
 | Saved Store auth | `session.headers(url)`; does not itself produce a fresh SAP signature. |
 | `TestFlightClient` | `(saved_session_json, transport={})` or `(saved_session_json, transport, options)` |
 | TF Store factories | `from_store_cookies(context_json, transport, options)` or `from_store_session(session, hardware20, mac_headers, transport, options)`; omit `options` using the existing shorter overloads. |
-| TF queries/files | `catalog()`, `install_metadata(bundle)`, `save_catalog(path)`, `save_install_metadata(bundle, path)`, `save(session_file)`, `download(bundle, output)` |
+| TF queries/files | `catalog()`, `install_metadata(bundle)`, `save_catalog(path)`, `save_install_metadata(bundle, path)`, `save(session_file)`, `download(bundle, output, include_sinf=true)` |
 | `AppStoreIosClient` | `(saved_context, transport={})` / `(saved_context, transport, headers)` or `(session, country, transport={})` / `(session, country, transport, headers)` |
 | `AppStoreMacClient` | `(session, store_directory, country, options={})` |
-| iOS/Mac operations | `catalog(app_id)`, `offer(app_id)`, `metadata(app_id)`, `download(app_id, destination)` |
+| iOS/Mac operations | `catalog(app_id)`, `offer(app_id)`, `metadata(app_id)`; iOS `download(app_id, destination, include_sinf=true)`, Mac `download(app_id, destination)`. |
 | iOS license / Mac package | `ios.acquire_free(app_id)` / `mac.download_package(app_id, destination)` |
 
 Full TF options and both App Store constructor styles:
@@ -1692,10 +1726,10 @@ are outputs for initially `NULL` opaque pointers. Inputs named `session`,
 | Saved TF creation | `aauth_testflight_client_create(data, size, &options, tf_options_json, &tf)` |
 | New TF session from Store cookies | `aauth_testflight_client_from_store_cookies(data, size, &options, tf_options_json, &tf)` |
 | TF query/persistence | `aauth_testflight_client_catalog(tf, &output)`; `aauth_testflight_client_install_metadata(tf, bundle, &output)`; `aauth_testflight_client_save(tf, path)` |
-| TF download | `aauth_testflight_client_download(tf, bundle, destination, &output)` |
+| TF download | `aauth_testflight_client_download_ipa(tf, bundle, destination, include_sinf, &output)`; `include_sinf=1` includes Apple's records, `0` skips insertion. |
 | iOS creation | `aauth_appstore_ios_client_create(data, size, &options, headers_json, &ios)` |
 | iOS queries | `aauth_appstore_ios_client_catalog(ios, app_id, &output)`; `aauth_appstore_ios_client_offer(ios, app_id, &output)`; `aauth_appstore_ios_client_metadata(ios, app_id, &output)` |
-| Explicit iOS acquisition / download | `aauth_appstore_ios_client_acquire_free(ios, app_id, &output)`; `aauth_appstore_ios_client_download(ios, app_id, destination, &output)` |
+| Explicit iOS acquisition / download | `aauth_appstore_ios_client_acquire_free(ios, app_id, &output)`; `aauth_appstore_ios_client_download_ipa(ios, app_id, destination, include_sinf, &output)` (`1` include, `0` skip). Use current headers/bindings with the matching native library. |
 | Mac creation | `aauth_appstore_mac_client_create(session, store_directory, "pl", &options, &overrides, headers_json, &mac)` |
 | Mac queries | `aauth_appstore_mac_client_catalog(mac, app_id, &output)`; `aauth_appstore_mac_client_offer(mac, app_id, &output)`; `aauth_appstore_mac_client_metadata(mac, app_id, &output)` |
 | Mac original/package download | `aauth_appstore_mac_client_download(mac, app_id, destination, package, &output)`; `package=0` preserves the asset, `package=1` validates/unwraps a package. |
@@ -1899,7 +1933,7 @@ TF hardware20. `apple-auth`, `apple-auth-store`, `apple-auth-testflight` and
 | TF `--tf-session` | Required session JSON for catalog/install/download. |
 | TF `--material` | Identity JSON for kbSync/transport; fields described in the TF workflow. |
 | TF `--install-metadata` | Matching install JSON including Base64 dpInfo for `--unwrap-transport`. |
-| iOS App Store CLI inputs | `CONTEXT.json catalog|metadata|download|acquire-free APP_ID OUTPUT` |
+| iOS App Store CLI inputs | `CONTEXT.json catalog|metadata|download|acquire-free APP_ID OUTPUT`; `download` also accepts trailing `--no-sinf`. |
 | Mac App Store CLI inputs | `--mac STORE_DIR SESSION.plist COUNTRY catalog|metadata|download|package APP_ID OUTPUT` |
 | Apple build `--output` | Default `build/apple`; destination directory for generated archives. |
 | `--with-client` | Include account/Store C APIs and Swift package; off means core only. |

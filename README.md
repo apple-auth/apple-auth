@@ -111,7 +111,11 @@ license acquisition. [Commands and session requirements](docs/appstore.md#ios-ap
 
 Downloaded iOS App Store and TestFlight IPAs can be decrypted with
 [fairplay-decrypt](https://github.com/EthanArbuckle/fairplay-decrypt).
-Use a `credential.bin` from the **same Apple ID used to download the IPA**.
+Use a `credential.bin` matching the target SINF's **`user` + `key`** selectors.
+One Apple ID can have different credentials; App Store/TestFlight origin alone
+does not determine which one to use. [Credential selection](docs/full-docs.md#decrypting-downloaded-ipas).
+SINF records are inserted by default for TestFlight and iOS App Store downloads;
+pass `include_sinf=False` in Python (`includeSinf: false` in Swift) to skip them.
 [Decryption example](docs/full-docs.md#decrypting-downloaded-ipas).
 
 `AppStoreMacClient` and `apple-auth-appstore --mac` download macOS Store assets

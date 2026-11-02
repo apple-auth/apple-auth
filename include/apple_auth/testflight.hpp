@@ -58,8 +58,10 @@ class TestFlightClient {
     APPLE_AUTH_CLIENT_EXPORT void save_catalog(const std::filesystem::path& file);
     APPLE_AUTH_CLIENT_EXPORT void save_install_metadata(const std::string& bundle,
                                                         const std::filesystem::path& file);
+    // Copies Apple's SINF records into SC_Info by default; content remains encrypted.
     APPLE_AUTH_CLIENT_EXPORT TestFlightDownload download(const std::string& bundle,
-                                                         const std::filesystem::path& output);
+                                                         const std::filesystem::path& output,
+                                                         bool include_sinf = true);
 
   private:
     struct Impl;

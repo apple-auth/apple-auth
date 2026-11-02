@@ -114,8 +114,8 @@ void TestFlightClient::save_install_metadata(const std::string& bundle,
 }
 
 TestFlightDownload TestFlightClient::download(const std::string& bundle,
-                                              const std::filesystem::path& path) {
-    return tfdetail::download_testflight_ipa(impl_->engine, bundle, path);
+                                              const std::filesystem::path& path, bool include_sinf) {
+    return tfdetail::download_testflight_ipa(impl_->engine, bundle, path, include_sinf);
 }
 
 std::uint64_t unwrap_testflight_transport(const std::filesystem::path& input,

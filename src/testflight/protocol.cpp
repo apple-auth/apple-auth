@@ -390,7 +390,8 @@ Json Engine::install_metadata(const std::string& bundle) {
 }
 
 TestFlightDownload
-download_testflight_ipa(Engine& client, const std::string& bundle, const Path& destination) {
+download_testflight_ipa(Engine& client, const std::string& bundle, const Path& destination,
+                        bool include_sinf) {
     require(!std::filesystem::exists(destination), "IPA output already exists");
     auto parent = destination.parent_path();
     if (parent.empty()) {
@@ -400,13 +401,16 @@ download_testflight_ipa(Engine& client, const std::string& bundle, const Path& d
     require(std::filesystem::create_directories(work), "Cannot create download artifact directory");
     std::filesystem::permissions(work, std::filesystem::perms::owner_all);
     const auto metadata = client.install_metadata(bundle);
+    const auto sinfs = include_sinf
+                           ? archivedetail::sinf_records(metadata.value("sinf", Json()))
+                           : std::vector<Bytes>{};
     write_private(work / "install-metadata.json", bytes(metadata.dump(2)));
     const auto length = download_file(text(metadata, "url"), work / "transport.bin");
     unwrap_transport(work / "transport.bin",
                      work / "applezip.ipa",
                      client.hardware(),
                      unbase64(text(metadata, "dpInfo")));
-    auto archive = normalize_ipa(work / "applezip.ipa", destination, bundle);
+    auto archive = normalize_ipa(work / "applezip.ipa", destination, bundle, sinfs);
     return {{std::move(archive.bundle),
              archive.members,
              archive.encrypted_images,

@@ -84,8 +84,39 @@ struct InputArchive {
 
 } // namespace
 
+std::vector<Bytes> sinf_records(const Json& encoded) {
+    if (encoded.is_null()) {
+        return {};
+    }
+    Json records = encoded;
+    if (records.is_string()) {
+        const auto text = records.get<std::string>();
+        require(text.size() <= 24 * 1024 * 1024, "SINF metadata exceeds size limit");
+        const auto first = text.find_first_not_of(" \t\r\n");
+        require(first != std::string::npos, "Empty SINF metadata");
+        records = parse_plist(text[first] == '<' ? bytes(text) : unbase64(text));
+    }
+    if (records.is_object()) {
+        require(records.contains("sinfs"), "SINF metadata lacks records");
+        records = Json(records.at("sinfs"));
+    }
+    require(records.is_array() && records.size() <= 256, "Invalid SINF record list");
+    std::vector<Bytes> result;
+    std::size_t total = 0;
+    for (const auto& record : records) {
+        require(record.is_object() && record.contains("sinf") && record.at("sinf").is_binary(),
+                "Invalid SINF record");
+        const auto& data = record.at("sinf").get_binary();
+        total += data.size();
+        require(!data.empty() && total <= 16 * 1024 * 1024, "Invalid SINF record size");
+        result.emplace_back(data.begin(), data.end());
+    }
+    return result;
+}
+
 IpaArchiveInfo
-normalize_ipa(const Path& source, const Path& destination, const std::string& expected_bundle) {
+normalize_ipa(const Path& source, const Path& destination, const std::string& expected_bundle,
+              const std::vector<Bytes>& sinfs) {
     require(!std::filesystem::exists(destination), "IPA output already exists");
     require(std::filesystem::absolute(source).lexically_normal() !=
                 std::filesystem::absolute(destination).lexically_normal(),
@@ -124,6 +155,38 @@ normalize_ipa(const Path& source, const Path& destination, const std::string& ex
             "Invalid IPA executable");
     require(names.contains(infos.front().substr(0, infos.front().rfind('/') + 1) + executable),
             "IPA lacks main executable");
+    std::map<std::string, Bytes> replacements;
+    if (!sinfs.empty()) {
+        const auto root = infos.front().substr(0, infos.front().rfind('/') + 1);
+        const auto manifest = root + "SC_Info/Manifest.plist";
+        std::vector<std::string> paths;
+        if (names.contains(manifest)) {
+            const auto data = parse_plist(input.member(names.at(manifest)));
+            require(data.contains("SinfPaths") && data.at("SinfPaths").is_array(),
+                    "IPA manifest lacks SINF paths");
+            paths = data.at("SinfPaths").get<std::vector<std::string>>();
+        } else {
+            require(sinfs.size() == 1, "Multiple SINF records require an IPA manifest");
+            paths.push_back("SC_Info/" + executable + ".sinf");
+        }
+        require(paths.size() == sinfs.size(), "SINF count differs from IPA manifest");
+        for (std::size_t i = 0; i < paths.size(); ++i) {
+            const auto& path = paths[i];
+            require(!path.empty() && path.front() != '/' && path.ends_with(".sinf") &&
+                        path.find_first_of("\\:") == std::string::npos &&
+                        path.find('\0') == std::string::npos && path.find("//") == std::string::npos,
+                    "Unsafe SINF member path");
+            bool sc_info = false;
+            for (const auto& part : Path(path)) {
+                require(part != ".." && part != ".", "Unsafe SINF parent path");
+                sc_info = sc_info || part == "SC_Info";
+            }
+            require(sc_info, "SINF path must be inside SC_Info");
+            const auto name = root + path;
+            require(!names.contains(name + "/"), "SINF path conflicts with an IPA directory");
+            require(replacements.emplace(name, sinfs[i]).second, "Duplicate SINF member path");
+        }
+    }
     if (!destination.parent_path().empty()) {
         std::filesystem::create_directories(destination.parent_path());
     }
@@ -133,9 +196,16 @@ normalize_ipa(const Path& source, const Path& destination, const std::string& ex
                        zip_discard);
         require(bool(output), "Cannot create normalized IPA");
         std::vector<Bytes> buffers;
-        buffers.reserve(names.size());
+        buffers.reserve(names.size() + replacements.size());
         for (const auto& [name, index] : names) {
-            buffers.push_back(input.member(index));
+            const auto replacement = replacements.find(name);
+            if (replacement == replacements.end()) {
+                buffers.push_back(input.member(index));
+            } else {
+                (void)input.member(index); // Validate the original member's CRC before replacement.
+                buffers.push_back(std::move(replacement->second));
+                replacements.erase(replacement);
+            }
             const auto& data = buffers.back();
             for (const auto id : encryption_ids(data)) {
                 if (id) {
@@ -164,6 +234,22 @@ normalize_ipa(const Path& source, const Path& destination, const std::string& ex
                         zip_set_file_compression(
                             output.get(), zip_uint64_t(added), ZIP_CM_DEFLATE, 6) == 0,
                     "Cannot preserve IPA ZIP metadata");
+            ++result.members;
+        }
+        for (auto& [name, data] : replacements) {
+            buffers.push_back(std::move(data));
+            const auto& member = buffers.back();
+            auto* buffer = zip_source_buffer(output.get(), member.data(), member.size(), 0);
+            require(buffer, "Cannot create SINF ZIP source");
+            const auto added = zip_file_add(output.get(), name.c_str(), buffer, ZIP_FL_ENC_UTF_8);
+            if (added < 0) {
+                zip_source_free(buffer);
+                throw Error("Cannot add SINF ZIP member");
+            }
+            require(zip_file_set_external_attributes(output.get(), zip_uint64_t(added), 0,
+                                                       ZIP_OPSYS_UNIX, 0100644u << 16) == 0 &&
+                        zip_set_file_compression(output.get(), zip_uint64_t(added), ZIP_CM_DEFLATE, 6) == 0,
+                    "Cannot set SINF ZIP metadata");
             ++result.members;
         }
         require(zip_close(output.get()) == 0, "Cannot finalize normalized IPA");

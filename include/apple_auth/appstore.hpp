@@ -45,8 +45,10 @@ class AppStoreIosClient {
     // Makes one purchase request after verifying that the offer is free.
     APPLE_AUTH_CLIENT_EXPORT Bytes acquire_free(std::uint64_t app_id);
 
+    // Copies Apple's SINF records into SC_Info by default; false keeps original CDN bytes.
     APPLE_AUTH_CLIENT_EXPORT AppStoreIosDownload download(std::uint64_t app_id,
-                                                          const std::filesystem::path& destination);
+                                                          const std::filesystem::path& destination,
+                                                          bool include_sinf = true);
 
   private:
     struct Impl;

@@ -48,5 +48,6 @@ class Engine {
 std::uint64_t
 unwrap_transport(const Path& source, const Path& destination, View hardware20, View dp_info88);
 TestFlightDownload
-download_testflight_ipa(Engine& client, const std::string& bundle, const Path& destination);
+download_testflight_ipa(Engine& client, const std::string& bundle, const Path& destination,
+                        bool include_sinf);
 } // namespace apple_auth::tfdetail

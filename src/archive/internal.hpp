@@ -16,6 +16,8 @@ inline Bytes read_file(const Path& path, std::size_t limit = 1ull << 31) {
 }
 
 std::vector<std::uint32_t> encryption_ids(View data);
+std::vector<Bytes> sinf_records(const Json& encoded);
 IpaArchiveInfo
-normalize_ipa(const Path& source, const Path& destination, const std::string& expected_bundle = {});
+normalize_ipa(const Path& source, const Path& destination, const std::string& expected_bundle = {},
+              const std::vector<Bytes>& sinfs = {});
 } // namespace apple_auth::archivedetail
